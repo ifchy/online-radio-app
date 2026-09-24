@@ -1,0 +1,154 @@
+# =====================================================================
+# Online Radio App — .gitignore
+# Flutter (Android first, iOS later) + Claude Code / GSD
+# This repo is PUBLIC: never commit signing keys or credentials.
+# =====================================================================
+
+# ---------------------------------------------------------------------
+# macOS
+# ---------------------------------------------------------------------
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+.TemporaryItems
+
+# Windows / Linux (in case of other machines or contributors)
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+*~
+.directory
+
+# ---------------------------------------------------------------------
+# Editors / IDEs
+# ---------------------------------------------------------------------
+# Android Studio / IntelliJ
+.idea/
+*.iml
+*.ipr
+*.iws
+# VS Code: shared launch/tasks configs may be committed; personal files not
+.vscode/*
+!.vscode/launch.json
+!.vscode/tasks.json
+!.vscode/extensions.json
+*.code-workspace
+.history/
+# Vim / Emacs
+*.swp
+*.swo
+\#*\#
+.#*
+
+# ---------------------------------------------------------------------
+# Flutter / Dart
+# ---------------------------------------------------------------------
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+/build/
+**/doc/api/
+migrate_working_dir/
+# Test coverage output
+/coverage/
+# FVM (Flutter Version Management) — keep .fvmrc, ignore the SDK symlink
+.fvm/flutter_sdk
+.fvm/versions
+# Symbolication and obfuscation outputs (keep for crash decoding, but not in git)
+app.*.symbols
+app.*.map.json
+*.symbols
+
+# ---------------------------------------------------------------------
+# Android
+# ---------------------------------------------------------------------
+**/android/.gradle/
+**/android/captures/
+**/android/.cxx/
+**/android/local.properties
+**/android/app/debug/
+**/android/app/profile/
+**/android/app/release/
+**/android/**/GeneratedPluginRegistrant.java
+.externalNativeBuild/
+# Built packages (should only ever live in build/, but just in case)
+*.apk
+*.aab
+*.ap_
+*.dex
+# Android Studio profiler / heap dumps
+*.hprof
+
+# ---------------------------------------------------------------------
+# iOS / Xcode (for the later iOS release)
+# ---------------------------------------------------------------------
+**/ios/Flutter/.last_build_id
+**/ios/Flutter/Generated.xcconfig
+**/ios/Flutter/flutter_export_environment.sh
+**/ios/Flutter/ephemeral/
+**/ios/Pods/
+**/ios/.symlinks/
+**/ios/**/GeneratedPluginRegistrant.*
+xcuserdata/
+*.xcuserstate
+DerivedData/
+*.ipa
+*.dSYM.zip
+*.dSYM
+.swiftpm/
+.build/
+
+# ---------------------------------------------------------------------
+# Secrets — signing keys, credentials, environment files
+# ---------------------------------------------------------------------
+# Android release signing
+key.properties
+**/android/key.properties
+*.jks
+*.keystore
+# Google Play publishing / service-account credentials
+*service-account*.json
+*play-store*credentials*.json
+# iOS signing (later)
+*.p12
+*.mobileprovision
+*.cer
+# Environment files (commit a template as .env.example instead)
+.env
+.env.*
+!.env.example
+*.secret
+secrets/
+
+# ---------------------------------------------------------------------
+# Fastlane (if used later for store uploads)
+# ---------------------------------------------------------------------
+**/fastlane/report.xml
+**/fastlane/Preview.html
+**/fastlane/screenshots/**/*.png
+**/fastlane/test_output/
+
+# ---------------------------------------------------------------------
+# Logs, temp and misc
+# ---------------------------------------------------------------------
+*.log
+*.tmp
+*.bak
+*.orig
+*.class
+*.pyc
+node_modules/
+
+# ---------------------------------------------------------------------
+# Claude Code / GSD
+# ---------------------------------------------------------------------
+# Personal Claude Code settings only. Do NOT ignore .planning/ (GSD's
+# shared project memory), CLAUDE.md, or the shared .claude/ files.
+.claude/settings.local.json
