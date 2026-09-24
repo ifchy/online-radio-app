@@ -64,7 +64,7 @@ None yet.
 
 ### Blockers/Concerns
 
-- [Before Phase 1]: Owner must decide the permanent Android package ID and a generic app name before `flutter create`
+- ~~[Before Phase 1]: package ID + app name~~ — resolved 2026-09-25: `bg.izk.radio`, "eRadioto"
 - [Before Phase 4]: Owner must decide personal account vs Идев ЕООД (D-U-N-S takes weeks) and crash reporting (none / Sentry)
 - [Phase 1]: Needs physical-device verification (Xiaomi + Samsung, Android 15/16/17): 60 min screen-off, Wi-Fi→4G recovery ≤ ~10 s, resume after call, Wi-Fi lock, POST_NOTIFICATIONS-denied controls
 - [Phase 1]: Record the unlisted FGS demo video as soon as background playback works (needed for the Play declaration in Phase 4)

@@ -1,4 +1,4 @@
-# Roadmap: Online Radio
+# Roadmap: eRadioto
 
 ## Overview
 
@@ -25,7 +25,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Goal**: A user on a physical Android phone can start a Bulgarian station and it keeps playing on its own through screen-off, background, calls, headphone changes, network switches and dead primary streams. The live edge, correct Cyrillic now-playing and media controls all work.
 **Mode:** mvp
 **Depends on**: Nothing (first phase)
-**Owner decisions required first**: final Android package ID (permanent, used by `flutter create`) and a generic app name (no station brand)
+**Owner decisions**: ✓ resolved 2026-09-25 — package ID `bg.izk.radio`, app name "eRadioto"
 **Requirements**: PLAY-01, PLAY-02, PLAY-03, PLAY-05, PLAY-06, PLAY-07, PLAY-08, PLAY-10, PLAY-11, STRM-01, STRM-02, STRM-03, STRM-04, STRM-05, APP-06, APP-07, PLAT-01, PLAT-03, PLAT-04, PLAT-06
 **Success Criteria** (what must be TRUE):
   1. On a physical phone and in a **release** build, the user can play each of ~5 hard-coded Bulgarian stations. Together they cover MP3, AAC+, HLS (including HLS behind a non-`.m3u8` URL), a `.pls`/`.m3u` playlist URL and a plain `http://` stream. Now-playing shows correct Cyrillic artist/title (including a windows-1251 station) and clears when the user switches station.

@@ -2,7 +2,7 @@
 
 ## Project
 
-**Online Radio (working title)**
+**eRadioto** (package `bg.izk.radio`)
 
 A free Android app for listening to live internet radio, with **Bulgarian radio as the first-class experience** and worldwide stations as a secondary catalogue. It aims to be the fastest, most reliable way for someone in Bulgaria to open their phone and hear БНР Хоризонт, their local city station or their favourite music station — including in the car and with the screen off. No ads, no accounts, no sign-up in v1. Android first; iOS may follow later from the same Flutter codebase.
 

@@ -1,4 +1,4 @@
-# Online Radio (working title)
+# eRadioto
 
 ## What This Is
 
@@ -101,8 +101,8 @@ Tap the app → hear the last Bulgarian station within ~3 seconds, and playback 
 | Curated BG catalogue as static JSON in repo, Radio Browser for the rest | No backend; curated data beats uneven community data for Bulgaria | — Pending |
 | Risk-first roadmap: playback engine before catalogue/UI | Audio reliability is the product; validate on real devices early | — Pending |
 | No ads in v1; banner-only later, ≥ 30-day users, never interstitials | Trust, retention, respectful UX | — Pending |
-| App name | Open question (§11) — working title "Online Radio" | — Pending (owner) |
-| Android package ID | Open question (§11) — e.g. `bg.<domain>.radio`; **must be decided before `flutter create` in Phase 1**; can never change after publishing | — Pending (owner, blocks Phase 1) |
+| App name: **eRadioto** | Owner choice 2026-09-25. Generic ("the radio"), no station brand → clear of Play impersonation review. Search should also match "еРадиото"/"eradioto". Store title can add keywords, e.g. "eRadioto – Радио онлайн България". Trademark/Play availability check still to do before release | ✓ Decided |
+| Android package ID: **`bg.izk.radio`** | Owner choice 2026-09-25. Neutral (independent of app name, so the name can still change); permanent once published. Used by `flutter create` in Phase 1 | ✓ Decided |
 | Publish as personal account vs Идев ЕООД | Personal accounts need 12 testers × 14 days closed test; organisation needs D-U-N-S | — Pending (owner, blocks store release) |
 | Crash reporting in v1 | Options: none / Firebase Crashlytics / Sentry; affects privacy policy + Data safety | — Pending (owner) |
 | Repository visibility | Currently public; implies strict secret hygiene | — Pending (owner) |
@@ -125,4 +125,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-09-24 after initialization (from docs/BRIEF.md, --auto)*
+*Last updated: 2026-09-25 after owner decided app name + package ID*

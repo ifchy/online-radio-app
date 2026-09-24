@@ -1,4 +1,4 @@
-# Requirements: Online Radio (working title)
+# Requirements: eRadioto
 
 **Defined:** 2026-09-24
 **Core Value:** Tap the app → hear the last Bulgarian station within ~3 seconds, and playback never stops on its own (screen off, background, network switches, short signal loss).
