@@ -25,10 +25,10 @@ Requirements for initial release (milestone v1.0). Each maps to exactly one road
 
 ### Streams
 
-- [ ] **STRM-01**: User can play MP3 and AAC/HE-AAC (AAC+) Icecast/Shoutcast streams
-- [ ] **STRM-02**: User can play HLS (`.m3u8`) streams, including HLS served under non-`.m3u8` URLs
-- [ ] **STRM-03**: User can play stations whose URL is a `.pls` or `.m3u` playlist (resolved to the real stream URL by the app)
-- [ ] **STRM-04**: User can play plain `http://` streams in release builds, while all app-owned traffic (catalogue, Radio Browser API, logos) is HTTPS-only
+- [x] **STRM-01**: User can play MP3 and AAC/HE-AAC (AAC+) Icecast/Shoutcast streams
+- [x] **STRM-02**: User can play HLS (`.m3u8`) streams, including HLS served under non-`.m3u8` URLs
+- [x] **STRM-03**: User can play stations whose URL is a `.pls` or `.m3u` playlist (resolved to the real stream URL by the app)
+- [x] **STRM-04**: User can play plain `http://` streams in release builds, while all app-owned traffic (catalogue, Radio Browser API, logos) is HTTPS-only
 - [ ] **STRM-05**: User sees "now playing" artist/title from ICY metadata when the station provides it, with correct Cyrillic (windows-1251 repair) and no stale title after switching stations
 
 ### Catalogue
@@ -148,10 +148,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PLAY-09 | Phase 4 | Pending |
 | PLAY-10 | Phase 1 | Pending |
 | PLAY-11 | Phase 1 | Pending |
-| STRM-01 | Phase 1 | Pending |
-| STRM-02 | Phase 1 | Pending |
-| STRM-03 | Phase 1 | Pending |
-| STRM-04 | Phase 1 | Pending |
+| STRM-01 | Phase 1 | Complete |
+| STRM-02 | Phase 1 | Complete |
+| STRM-03 | Phase 1 | Complete |
+| STRM-04 | Phase 1 | Complete |
 | STRM-05 | Phase 1 | Pending |
 | CAT-01 | Phase 2 | Pending |
 | CAT-02 | Phase 2 | Pending |
@@ -194,6 +194,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | REL-04 | Phase 4 | Pending |
 
 **Coverage:**
+
 - v1 requirements: 55 total
 - Mapped to phases: 55
 - Unmapped: 0 ✓

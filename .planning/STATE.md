@@ -4,16 +4,16 @@ milestone: v1.0
 current_phase: 01
 current_phase_name: Playback Engine & Walking Skeleton
 status: executing
-stopped_at: Completed 01-06-PLAN.md
-last_updated: "2026-09-25T15:20:48.523Z"
+stopped_at: Completed 01-05-PLAN.md
+last_updated: "2026-09-25T16:11:46.927Z"
 last_activity: 2026-09-25
-last_activity_desc: Completed 01-06 ICY now-playing text pipeline (cp1251 repair, sanitiser, parser)
-state_head: 7dd6cddd99d6ce56f33270696efab0a9a2f88573
+last_activity_desc: Completed 01-05 owner-verified station list (4 stations, debug test stations)
+state_head: 8b2b0588f5d9c368691f4a02872162fb33db6389
 progress:
   total_phases: 4
   completed_phases: 0
   total_plans: 13
-  completed_plans: 4
+  completed_plans: 5
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-09-24)
 ## Current Position
 
 Phase: 01 (Playback Engine & Walking Skeleton) — EXECUTING
-Plan: 4 of 13 complete (01-01, 01-03, 01-04, 01-06); 01-02 and 01-05 (Wave 2) still open
+Plan: 5 of 13 complete (01-01, 01-03, 01-04, 01-05, 01-06); 01-02 (Wave 2) still open, waiting on the owner's keystore
 Status: Ready to execute
-Last activity: 2026-09-25 — Completed 01-06 ICY now-playing text pipeline (cp1251 repair, sanitiser, parser)
+Last activity: 2026-09-25 — Completed 01-05 owner-verified station list (4 stations, debug test stations)
 
-Progress: [███░░░░░░░] 31% (4/13 plans in Phase 01)
+Progress: [████░░░░░░] 38% (5/13 plans in Phase 01)
 
 ## Performance Metrics
 
@@ -63,6 +63,7 @@ Progress: [███░░░░░░░] 31% (4/13 plans in Phase 01)
 | Phase 01 P03 | 11 min | 2 tasks | 13 files |
 | Phase 01 P04 | 13 min | 2 tasks | 14 files |
 | Phase 01 P06 | 6 min | 2 tasks | 8 files |
+| Phase 01 P05 | 6 min | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -88,6 +89,10 @@ Recent decisions affecting current work:
 - [Phase 01]: [01-04]: MediaHttpClient is the only Dart client allowed to fetch http:// (media playlists); Phase 2 catalogue and Radio Browser traffic must use the HTTPS-only AppHttpClient; T-04-06 (block loopback/private playlist entries) is due in Phase 2
 - [Phase 01]: [01-06]: parseIcyTitle runs repairCp1251 BEFORE sanitizeIcyText (reverse of RESEARCH Pattern 5) so cp1251 punctuation („ “ –, arriving as U+0080-U+009F) survives; 01-08 passes the playing stream's icyCharset and republishes only when the NowPlaying value changes
 - [Phase 01]: [01-06]: sanitizeIcyText turns tab/LF/VT/FF/CR into spaces before collapsing and strips all other C0/DEL/C1 and bidi U+202A-202E/U+2066-2069; clamp is 200 code points by runes; a dangling ' - ' separator yields a title-only NowPlaying
+- [Phase 01]: [01-05]: Phase 1 ships 4 owner-verified stations (БНР Хоризонт, Радио 1, БГ Радио, Радио Енерджи), VLC-verified 2026-09-25. N-JOY is excluded (neither official endpoint plays) and Радио Витоша is excluded (no official stream, option-c). No unofficial substitute is used (D-03).
+- [Phase 01]: [01-05]: БНР Хоризонт is HLS-only (lb-hls.cdn.bg, then e106-ts.cdn.bg, both from bnr.bg's player). The port-8011 AAC/MP3 mounts were REJECTED.
+- [Phase 01]: [01-05]: No release station uses a .pls/.m3u wrapper or a cp1251 charset. Wrapper coverage (STRM-03) comes from the 01-04 resolver tests, and cp1251 from the 01-06 goldens. Non-.m3u8 HLS is covered by the debug-only "ТЕСТ: Хоризонт (HLS sniff)" entry (kind unknown).
+- [Phase 01]: [01-05]: StationDirectory.phase1 appends debugStations only when `!kReleaseMode && includeDebug` (const-false in release). Only station_directory.dart may import debug_stations.dart.
 
 ### Pending Todos
 
@@ -99,6 +104,12 @@ None yet.
 - [Before Phase 4]: Owner must decide personal account vs Идев ЕООД (D-U-N-S takes weeks) and crash reporting (none / Sentry)
 - [Phase 1]: Needs physical-device verification (Xiaomi + Samsung, Android 15/16/17): 60 min screen-off, Wi-Fi→4G recovery ≤ ~10 s, resume after call, Wi-Fi lock, POST_NOTIFICATIONS-denied controls
 - [Phase 1]: Record the unlisted FGS demo video as soon as background playback works (needed for the Play declaration in Phase 4)
+- [Phase 1 → 2, owner decision 2026-09-25]: The station lineup has gaps.
+  - Радио Витоша has no official stream (excluded, option-c).
+  - N-JOY's official endpoints do not play (excluded).
+  - No release station uses a .pls/.m3u wrapper; `http://play.global.audio/bgradio128.m3u` is an unverified candidate.
+  - No stream is proven cp1251, because the byte probe was not run.
+  - Re-add Витоша and N-JOY only with verified official URLs.
 - [Phase 2]: Owner hand-curation of stream URLs and native-speaker review of the шльокавица table and search golden tests run alongside development
 
 ## Deferred Items
@@ -111,6 +122,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-09-25T15:20:38.732Z
-Stopped at: Completed 01-06-PLAN.md
+Last session: 2026-09-25T16:11:46.858Z
+Stopped at: Completed 01-05-PLAN.md
 Resume file: None
