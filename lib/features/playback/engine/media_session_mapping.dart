@@ -1,4 +1,5 @@
 import 'package:audio_service/audio_service.dart';
+import 'package:flutter/foundation.dart' show mapEquals;
 
 import '../../catalog/domain/station.dart';
 import '../domain/engine_strings.dart';
@@ -45,14 +46,52 @@ PlaybackState playbackStateFor(PlaybackStatus status) {
   );
 }
 
-/// The media-session item for [station] in [status].
+/// The media-session item for [station] in [status]: what the notification
+/// and the lock screen show.
+///
+/// The title is always the station name. Under it goes the same state text
+/// the mini-player shows (D-09) whenever the player is not simply playing.
+/// Playing and Idle have no subtitle; plan 01-08 puts the ICY now-playing
+/// text there while Playing.
 MediaItem mediaItemFor(
   Station station,
   PlaybackStatus status,
   EngineStrings strings,
-) => MediaItem(
-  id: StationMediaId(station.id).format(),
-  title: station.name,
-  isLive: true,
-  extras: {'stationId': station.id.value},
-);
+) {
+  final stateText = _stateText(status, strings);
+  return MediaItem(
+    id: StationMediaId(station.id).format(),
+    title: station.name,
+    artist: stateText,
+    displaySubtitle: stateText,
+    isLive: true,
+    extras: {'stationId': station.id.value},
+  );
+}
+
+String? _stateText(PlaybackStatus status, EngineStrings strings) =>
+    switch (status) {
+      Connecting() => strings.connecting,
+      Buffering() => strings.buffering,
+      Reconnecting() => strings.reconnecting,
+      Interrupted() => strings.interrupted,
+      Paused() => strings.paused,
+      PlaybackError() => strings.error,
+      Playing() || Idle() => null,
+    };
+
+/// Whether [a] and [b] would show the same thing. `MediaItem ==` compares
+/// only the id, so it cannot tell "Connecting…" from "Paused".
+bool sameMediaItem(MediaItem? a, MediaItem? b) {
+  if (a == null || b == null) return a == b;
+  return a.id == b.id &&
+      a.title == b.title &&
+      a.artist == b.artist &&
+      a.album == b.album &&
+      a.displayTitle == b.displayTitle &&
+      a.displaySubtitle == b.displaySubtitle &&
+      a.displayDescription == b.displayDescription &&
+      a.artUri == b.artUri &&
+      a.isLive == b.isLive &&
+      mapEquals(a.extras, b.extras);
+}

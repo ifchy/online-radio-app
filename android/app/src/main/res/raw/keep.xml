@@ -3,6 +3,8 @@
      up by name (getIdentifier), so the shrinker cannot see them and strips
      them. Without drawable/audio_service_stop, building the Android 13+ Stop
      custom action throws, setState fails on every play and pause, and the
-     media foreground service and notification never start. Keep them. -->
+     media foreground service and notification never start. Keep them.
+     ic_stat_radio is the notification small icon (androidNotificationIcon in
+     bootstrap.dart), also looked up by name. -->
 <resources xmlns:tools="http://schemas.android.com/tools"
-    tools:keep="@drawable/audio_service_*" />
+    tools:keep="@drawable/audio_service_*,@drawable/ic_stat_radio" />

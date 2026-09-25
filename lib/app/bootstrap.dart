@@ -56,10 +56,14 @@ Future<void> bootstrap() async {
       resolver,
       strings,
     ),
-    config: const AudioServiceConfig(
+    config: AudioServiceConfig(
       // Permanent once shipped: Android keeps the user's channel settings.
       androidNotificationChannelId: 'bg.izk.radio.playback',
-      androidNotificationChannelName: 'Playback',
+      // "Възпроизвеждане" / "Playback". Android names the channel when it is
+      // first created, from the device language at that moment.
+      androidNotificationChannelName: strings.notificationChannelName,
+      // Monochrome status-bar icon; kept in release by res/raw/keep.xml.
+      androidNotificationIcon: 'drawable/ic_stat_radio',
       // Swipeable while paused (D-13).
       androidNotificationOngoing: false,
       // No foreground service while paused (D-13, battery).

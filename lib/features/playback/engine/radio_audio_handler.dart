@@ -151,7 +151,7 @@ class RadioAudioHandler extends BaseAudioHandler {
     await _player.stop();
     await _session.release();
     _setStation(null);
-    mediaItem.add(null);
+    _publishMediaItem(null);
     // processingState idle: audio_service stops the service and removes the
     // notification.
     _setStatus(const PlaybackStatus.idle());
@@ -162,16 +162,13 @@ class RadioAudioHandler extends BaseAudioHandler {
     await _player.stop();
     if (generation != _generation) return;
 
-    // Publish before loading, so the FGS starts from the user action.
+    // Publish before loading, so the FGS starts from the user action. The
+    // media item (station name, "Connecting…") goes out with the status.
     _lastStation = station;
     _setStation(station);
-    final connecting = PlaybackStatus.connecting(
-      station: station,
-      streamIndex: 0,
-      round: 0,
+    _setStatus(
+      PlaybackStatus.connecting(station: station, streamIndex: 0, round: 0),
     );
-    mediaItem.add(mediaItemFor(station, connecting, _strings));
-    _setStatus(connecting);
 
     // Playlists and extension-less HLS are resolved in Dart first; the
     // catalogue kind decides the source type, never the file extension.
@@ -276,10 +273,24 @@ class RadioAudioHandler extends BaseAudioHandler {
     await _session.release();
   }
 
+  /// Publishes [status] to the media session and the app. The media item
+  /// goes first, so the notification never shows a new state under an old
+  /// subtitle.
   void _setStatus(PlaybackStatus status) {
     _status = status;
+    final station = status.stationOrNull;
+    if (station != null) {
+      _publishMediaItem(mediaItemFor(station, status, _strings));
+    }
     playbackState.add(playbackStateFor(status));
     _statusController.add(status);
+  }
+
+  /// Every media-item update redraws the notification and the lock screen,
+  /// so an unchanged item is not sent again (ARCHITECTURE Anti-Pattern 9).
+  void _publishMediaItem(MediaItem? item) {
+    if (sameMediaItem(mediaItem.value, item)) return;
+    mediaItem.add(item);
   }
 
   void _setStation(Station? station) {
