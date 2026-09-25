@@ -145,12 +145,12 @@ jobs:
         run: |
           build_tools="$(ls -1 "$ANDROID_HOME/build-tools" | sort -V | tail -n 1)"
           badging="$("$ANDROID_HOME/build-tools/$build_tools/aapt2" dump badging "$APK")"
-          grep -E "^(package|sdkVersion|targetSdkVersion)" <<<"$badging"
+          grep -E "^(package|sdkVersion|minSdkVersion|targetSdkVersion)" <<<"$badging"
           if ! grep -qE "^package: name='bg.izk.radio' versionCode='${GITHUB_RUN_NUMBER}' " <<<"$badging"; then
             echo "::error::The APK versionCode is not the run number ${GITHUB_RUN_NUMBER}."
             exit 1
           fi
-          if ! grep -qx "sdkVersion:'24'" <<<"$badging" || ! grep -qx "targetSdkVersion:'36'" <<<"$badging"; then
+          if ! grep -qxE "(sdkVersion|minSdkVersion):'24'" <<<"$badging" || ! grep -qx "targetSdkVersion:'36'" <<<"$badging"; then
             echo "::error::The APK is not minSdk 24 / targetSdk 36."
             exit 1
           fi
