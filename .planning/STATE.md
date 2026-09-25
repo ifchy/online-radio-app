@@ -4,16 +4,16 @@ milestone: v1.0
 current_phase: 01
 current_phase_name: Playback Engine & Walking Skeleton
 status: executing
-stopped_at: Completed 01-03-PLAN.md
-last_updated: "2026-09-25T14:57:29.863Z"
+stopped_at: Completed 01-04-PLAN.md
+last_updated: "2026-09-25T15:12:08.811Z"
 last_activity: 2026-09-25
-last_activity_desc: Completed 01-03 BG/EN localisation and accessible mini-player
-state_head: 09d767728ee9fe04f2f5e62f2f4f576d8f7dd3ec
+last_activity_desc: Completed 01-04 playlist resolver and HTTPS-only clients
+state_head: 937114a195d6b3a3a911ea0f170a2e3f7f10d752
 progress:
   total_phases: 4
   completed_phases: 0
   total_plans: 13
-  completed_plans: 2
+  completed_plans: 3
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-09-24)
 ## Current Position
 
 Phase: 01 (Playback Engine & Walking Skeleton) — EXECUTING
-Plan: 2 of 13 complete (01-01, 01-03); 01-02 and the rest of Wave 2 still open
+Plan: 3 of 13 complete (01-01, 01-03, 01-04); 01-02 and the rest of Wave 2 still open
 Status: Ready to execute
-Last activity: 2026-09-25 — Completed 01-03 BG/EN localisation and accessible mini-player
+Last activity: 2026-09-25 — Completed 01-04 playlist resolver and HTTPS-only clients
 
-Progress: [██░░░░░░░░] 15% (2/13 plans in Phase 01)
+Progress: [██░░░░░░░░] 23% (3/13 plans in Phase 01)
 
 ## Performance Metrics
 
@@ -61,6 +61,7 @@ Progress: [██░░░░░░░░] 15% (2/13 plans in Phase 01)
 |------|----------|-------|-------|
 | Phase 01 P01 | 2h 3m | 1 tasks | 53 files |
 | Phase 01 P03 | 11 min | 2 tasks | 13 files |
+| Phase 01 P04 | 13 min | 2 tasks | 14 files |
 
 ## Accumulated Context
 
@@ -81,6 +82,9 @@ Recent decisions affecting current work:
 - [Phase 01]: [01-03]: The mini-player's play/pause shows Pause in every state where AudioEngine.togglePause pauses (Connecting/Playing/Buffering/Reconnecting/Interrupted), matching the notification; Play only in Paused and Error
 - [Phase 01]: [01-03]: resolveAppLocale(Locale?) in lib/app/app.dart is the single locale rule (bg -> bg, else en); 01-07 builds notification strings with lookupAppLocalizations(resolveAppLocale(...)); all Phase 1 ARB keys exist, so later plans should not edit the ARB files
 - [Phase 01]: [01-03]: Widget tests use FakeEngine and pump twice after an engine publish; ConsumerWidgets that return early watch all providers first
+- [Phase 01]: [01-04]: Every catalogue stream goes through StreamResolver before StreamPlayer.load; progressive/hls skip the network, pls/m3u/unknown are fetched once with hard limits (5 s per resolution, 64 KB, 5 redirects, depth 3, 10 candidates, http/https only) and cached 1 h; invalidate() on every playback failure
+- [Phase 01]: [01-04]: Both Dart clients follow redirects by hand (followRedirects=false) so every hop is scheme-checked and the hop cap is deterministic; MockClient cannot report final URLs or enforce maxRedirects
+- [Phase 01]: [01-04]: MediaHttpClient is the only Dart client allowed to fetch http:// (media playlists); Phase 2 catalogue and Radio Browser traffic must use the HTTPS-only AppHttpClient; T-04-06 (block loopback/private playlist entries) is due in Phase 2
 
 ### Pending Todos
 
@@ -104,6 +108,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-09-25T14:57:15.025Z
-Stopped at: Completed 01-03-PLAN.md
+Last session: 2026-09-25T15:12:08.772Z
+Stopped at: Completed 01-04-PLAN.md
 Resume file: None
