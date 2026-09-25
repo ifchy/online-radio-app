@@ -41,7 +41,6 @@ class RadioAudioHandler extends BaseAudioHandler {
   final StreamPlayer _player;
   final AudioSessionPort _session;
   final StationDirectory _directory;
-  // ignore: unused_field
   final StreamResolver _resolver;
   final List<StreamSubscription<Object?>> _subscriptions = [];
 
@@ -56,6 +55,10 @@ class RadioAudioHandler extends BaseAudioHandler {
   /// answers the system UI's "recent" browse query), and its Play button, a
   /// Bluetooth PLAY or a car must start this station again.
   Station? _lastStation;
+
+  /// The catalogue stream of the current start, invalidated in the resolver
+  /// when playback of it fails.
+  StationStream? _currentStream;
   int _generation = 0;
 
   /// The list the current station was started from.
@@ -164,14 +167,36 @@ class RadioAudioHandler extends BaseAudioHandler {
       PlaybackStatus.connecting(station: station, streamIndex: 0, round: 0),
     );
 
-    final resolved = _resolvedFor(station.streams.first);
-    if (resolved == null) {
-      // .pls / .m3u / unknown need the resolver (plan 01-04).
-      await _fail(station, PlaybackErrorKind.unsupportedFormat);
+    // Playlists and extension-less HLS are resolved in Dart first; the
+    // catalogue kind decides the source type, never the file extension.
+    // Rotation across candidates and streams[] arrives with plan 01-09.
+    final stream = station.streams.first;
+    _currentStream = stream;
+    final List<ResolvedStream> candidates;
+    try {
+      candidates = await _resolver.resolve(stream);
+    } on StreamResolutionException catch (e) {
+      _resolver.invalidate(stream);
+      if (generation == _generation) {
+        await _fail(station, _errorKindFor(e.reason), invalidate: false);
+      }
+      return;
+    } catch (_) {
+      _resolver.invalidate(stream);
+      if (generation == _generation) {
+        await _fail(
+          station,
+          PlaybackErrorKind.streamUnreachable,
+          invalidate: false,
+        );
+      }
       return;
     }
+    // A newer play(), pause() or stop() arrived while resolving.
+    if (generation != _generation) return;
+
     try {
-      await _player.load(resolved, generation: generation);
+      await _player.load(candidates.first, generation: generation);
     } catch (_) {
       if (generation == _generation) {
         await _fail(station, PlaybackErrorKind.streamUnreachable);
@@ -179,14 +204,17 @@ class RadioAudioHandler extends BaseAudioHandler {
     }
   }
 
-  static ResolvedStream? _resolvedFor(StationStream stream) =>
-      switch (stream.kind) {
-        StreamKind.progressive => ResolvedStream(
-          stream.url,
-          PlayableKind.progressive,
-        ),
-        StreamKind.hls => ResolvedStream(stream.url, PlayableKind.hls),
-        StreamKind.pls || StreamKind.m3u || StreamKind.unknown => null,
+  static PlaybackErrorKind _errorKindFor(StreamResolutionFailure reason) =>
+      switch (reason) {
+        StreamResolutionFailure.unsupportedScheme ||
+        StreamResolutionFailure.notAPlaylist ||
+        StreamResolutionFailure.empty => PlaybackErrorKind.unsupportedFormat,
+        StreamResolutionFailure.httpStatus ||
+        StreamResolutionFailure.timeout ||
+        StreamResolutionFailure.tooLarge ||
+        StreamResolutionFailure.tooDeep ||
+        StreamResolutionFailure.tooManyRedirects ||
+        StreamResolutionFailure.network => PlaybackErrorKind.streamUnreachable,
       };
 
   void _onSnapshot(PlayerSnapshot snapshot) {
@@ -225,8 +253,18 @@ class RadioAudioHandler extends BaseAudioHandler {
     unawaited(_fail(station, PlaybackErrorKind.streamUnreachable));
   }
 
-  Future<void> _fail(Station station, PlaybackErrorKind kind) async {
+  /// Ends the current start in [PlaybackError]. Unless [invalidate] is false
+  /// (the caller already did it), the current stream's resolution is dropped:
+  /// the resolved URL may be stale (a rotated CDN token, a moved playlist
+  /// entry), so the next start fetches the playlist again.
+  Future<void> _fail(
+    Station station,
+    PlaybackErrorKind kind, {
+    bool invalidate = true,
+  }) async {
     _generation++;
+    final stream = _currentStream;
+    if (invalidate && stream != null) _resolver.invalidate(stream);
     _setStatus(PlaybackStatus.error(station: station, kind: kind));
     await _player.stop();
     await _session.release();
