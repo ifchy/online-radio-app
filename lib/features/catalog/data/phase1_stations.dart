@@ -12,11 +12,12 @@ import '../domain/station.dart';
 /// they were not ffprobed. No stream is marked `IcyCharset.cp1251`, because
 /// the owner did not run the ICY byte probe (gap decision option-a, 2026-09-25).
 ///
-/// Excluded from Phase 1 by owner decision on 2026-09-25 (D-03: no unofficial
+/// Excluded or rejected by owner decision on 2026-09-25 (D-03: no unofficial
 /// substitute):
-/// - N-JOY: both official bTV Radio endpoints (the .m3u wrapper and the
-///   direct MP3) played nothing in VLC.
 /// - Радио Витоша: no official stream was found (gap decision option-c).
+/// - N-JOY's older bTV Radio Icecast endpoints (the .m3u wrapper and the
+///   direct MP3): REJECTED, both played nothing in VLC. N-JOY ships with the
+///   stream the owner verified on bTV's own CDN instead.
 /// - БНР Хоризонт's port-8011 Icecast AAC and MP3 mounts: REJECTED, both
 ///   failed in VLC.
 final List<Station> phase1Stations = [
@@ -129,6 +130,20 @@ final List<Station> phase1Stations = [
         kind: StreamKind.progressive,
         codec: 'mp3',
         bitrateKbps: 64,
+      ),
+    ],
+  ),
+  Station(
+    id: StationId.curated('njoy'),
+    name: 'N-JOY',
+    nameLatin: 'N-JOY',
+    streams: [
+      // Source: bTV's own CDN (cdn.btv.bg), found by the owner;
+      // verifiedAt 2026-09-25.
+      StationStream(
+        url: Uri.parse('https://cdn.btv.bg/radio/njoy.mp3'),
+        kind: StreamKind.progressive,
+        codec: 'mp3',
       ),
     ],
   ),
