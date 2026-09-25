@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Cleartext is permitted app-wide for NATIVE sockets because live-radio streams are often http://
+     on arbitrary hosts. Only ExoPlayer (media) uses native sockets in this app. Dart sockets
+     (package:http) ignore this file; app-owned traffic is forced to HTTPS by AppHttpClient. -->
+<network-security-config>
+  <base-config cleartextTrafficPermitted="true">
+    <trust-anchors><certificates src="system"/></trust-anchors>
+  </base-config>
+</network-security-config>

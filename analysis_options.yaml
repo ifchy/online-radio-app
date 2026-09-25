@@ -1,0 +1,10 @@
+# Base lints come from flutter_lints. Riverpod lints run through the analysis
+# server plugin API (riverpod_lint 3.x, no custom_lint); `flutter analyze` does
+# not surface them, so CI runs `dart analyze` as well.
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  exclude: [build/**, android/**, "**/*.g.dart", "**/*.freezed.dart"]
+
+plugins:
+  riverpod_lint: ^3.1.9
