@@ -7,7 +7,8 @@ class StationDirectory {
     : all = List.unmodifiable(stations),
       _byId = {for (final s in stations) s.id: s};
 
-  factory StationDirectory.phase1() => StationDirectory(phase1Stations);
+  factory StationDirectory.phase1({bool includeDebug = false}) =>
+      StationDirectory(phase1Stations);
 
   final List<Station> all;
   final Map<StationId, Station> _byId;
