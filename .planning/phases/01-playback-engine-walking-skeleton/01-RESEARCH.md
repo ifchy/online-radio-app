@@ -914,18 +914,24 @@ Everything else batches at the end.
 | A12 | The Flutter tool re-injects the gitignored Gradle wrapper at build time | CI | CI build fails at first run. Confirm on the first tag build. |
 | A13 | Proposed timing values (connect 10 s, stall 8 s, flow 5 s, buffer 1 s/2.5 s, backoff 0–30 s) meet the ~10 s recovery | Pattern 2/3 | Slower recovery. Tune on device (Claude's discretion). |
 
-## Open Questions (owner / planner)
+## Open Questions (RESOLVED)
 
 1. **Радио Витоша stream.** No official URL was found in accessible sources.
    - Recommendation: the owner captures it from radiovitosha.com's player (protocol step 1).
    - If none is publicly offered, flag it per D-03. Don't swap the station.
+   - **RESOLVED (planning):** plan 01-04 Task 1 is a blocking owner decision (`checkpoint:decision`, gate blocking-human). The owner captures the official URL, or chooses option-c: the station is left out of the Phase 1 release list and the gap is recorded. No substitute station.
 2. **"HLS behind a non-`.m3u8` URL".** Not obtainable from the 6 stations.
    - Recommendation: unit tests plus a debug-only `kind: unknown` Хоризонт entry that exercises the content sniff on device.
    - The owner accepts this or names another official source.
+   - **RESOLVED (planning):** plan 01-03 unit-tests the content sniff (extension-less URL → HLS on the original URL). Plan 01-04 adds the debug-only `debug:horizont-hls-sniff` entry under option-a, or uses another official endpoint of the six stations under option-b, as the owner decides at the 01-04 checkpoint.
 3. **`dist=WEBSITEBG` URLs vs the Phase 2 "reject `dist=`" catalogue rule.** These are the stations' own website tags. Phase 2 needs an allow-list of "own" tags per host.
+   - **RESOLVED (deferred to Phase 2 by scope):** Phase 1 has no catalogue validator. The note is carried in plan 01-04's checkpoint context so Phase 2's CAT-02 validator allow-lists the stations' own `dist=` tags per host.
 4. **cp1251 station.** Unknown until the probe runs. If none of the 6 sends cp1251, the owner decides whether unit-test coverage satisfies SC1.
+   - **RESOLVED (planning):** plan 01-05 always ships the cp1251 golden tests. The owner's byte probe at the 01-04 checkpoint decides which streams get `icyCharset: cp1251`. If none, SC1's cp1251 clause is shown by tests only, as the owner decides there.
 5. **Blocking mid-phase checkpoints** vs `human_verify_mode: end-of-phase`. The planner should make the keystore/skeleton smoke check and the D-02 check blocking.
+   - **RESOLVED (planning):** three `gate="blocking-human"` stops: the 01-01 tracer (skeleton smoke test on the phone), 01-02 Task 2 (keystore + secrets + first signed build) and 01-04 Task 1 (D-02 URL verification and gap decisions). All other device checks are `<human-check>` blocks harvested into the end-of-phase UAT.
 6. **Interrupted notification label.** D-09 lists no label for "interrupted by a call". Suggest an ARB key `stateInterrupted` (placeholder "Прекъснато") shown in the mini-player and notification subtitle. The owner reviews the copy in Phase 3.
+   - **RESOLVED (planning):** plan 01-01 Task 2 adds `stateInterrupted` ("Прекъснато" / "Interrupted"), plus `statePaused`, to the ARB files, the mini-player and the notification subtitle. The owner reviews the copy in Phase 3.
 
 ## Environment Availability
 
