@@ -1,0 +1,33 @@
+{
+  "contract": "1.0.0",
+  "flavor": "core",
+  "milestone": "v1.0",
+  "phases": [
+    {
+      "number": "1",
+      "name": "Playback Engine & Walking Skeleton",
+      "status": "pending"
+    },
+    {
+      "number": "2",
+      "name": "Station Catalogue, Search & Browse",
+      "status": "pending"
+    },
+    {
+      "number": "3",
+      "name": "Listening Experience",
+      "status": "pending"
+    },
+    {
+      "number": "4",
+      "name": "Hardening, Closed Testing & Store Release",
+      "status": "pending"
+    }
+  ],
+  "next": {
+    "command": "/gsd:progress --next",
+    "label": "Advance to the next step",
+    "reason": "Phase 1 of 4 · executing"
+  },
+  "updated_at": "2026-09-25T12:04:16.536Z"
+}
