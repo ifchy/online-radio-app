@@ -1,0 +1,71 @@
+{
+  "@@locale": "en",
+  "appTitle": "eRadioto",
+  "@appTitle": {
+    "description": "App name shown in the launcher task switcher and window title. The same word in every language."
+  },
+  "stationListTitle": "Stations",
+  "@stationListTitle": {
+    "description": "AppBar title of the home screen's station list."
+  },
+  "actionPlay": "Play",
+  "@actionPlay": {
+    "description": "Tooltip and TalkBack label of the mini-player button that starts or resumes playback."
+  },
+  "actionPause": "Pause",
+  "@actionPause": {
+    "description": "Tooltip and TalkBack label of the mini-player button that pauses playback."
+  },
+  "actionStop": "Stop",
+  "@actionStop": {
+    "description": "Tooltip and TalkBack label of the mini-player button that stops playback and hides the player."
+  },
+  "playStationHint": "Play {station}",
+  "@playStationHint": {
+    "description": "TalkBack hint on a station tile in the list: what tapping the tile does.",
+    "placeholders": {
+      "station": {
+        "type": "String",
+        "example": "БГ Радио"
+      }
+    }
+  },
+  "stateConnecting": "Connecting…",
+  "@stateConnecting": {
+    "description": "Mini-player and notification state label while the stream is being opened."
+  },
+  "stateBuffering": "Buffering…",
+  "@stateBuffering": {
+    "description": "Mini-player and notification state label while playback waits for more data."
+  },
+  "stateReconnecting": "Reconnecting…",
+  "@stateReconnecting": {
+    "description": "Mini-player and notification state label while the app retries a dropped stream."
+  },
+  "stateInterrupted": "Interrupted",
+  "@stateInterrupted": {
+    "description": "Mini-player and notification state label while another app (e.g. a phone call) has taken audio focus."
+  },
+  "statePaused": "Paused",
+  "@statePaused": {
+    "description": "Mini-player and notification state label while playback is paused."
+  },
+  "stateError": "Error",
+  "@stateError": {
+    "description": "Mini-player and notification state label after playback failed. The friendly error text comes in Phase 4."
+  },
+  "notificationChannelName": "Playback",
+  "@notificationChannelName": {
+    "description": "Name of the Android notification channel for the media notification, shown in the system notification settings."
+  },
+  "miniPlayerRegionLabel": "Now playing: {station}",
+  "@miniPlayerRegionLabel": {
+    "description": "TalkBack label of the mini-player region at the bottom of the screen.",
+    "placeholders": {
+      "station": {
+        "type": "String",
+        "example": "БГ Радио"
+      }
+    }
+  }
+}

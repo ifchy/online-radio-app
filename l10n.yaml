@@ -1,0 +1,7 @@
+# gen-l10n config (D-08). No `synthetic-package` key: Flutter 3.47 warns on
+# `false` and fails on `true`. Output goes into lib/l10n/ and is committed
+# (D-17). Import with `package:radio/l10n/app_localizations.dart`.
+arb-dir: lib/l10n
+template-arb-file: app_en.arb
+output-localization-file: app_localizations.dart
+nullable-getter: false

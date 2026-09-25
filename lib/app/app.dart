@@ -2,6 +2,10 @@ import 'package:flutter/material.dart';
 
 import 'home_screen.dart';
 
+/// Picks the UI language from the device locale (D-08). RED stub: always
+/// English until the GREEN step implements the rule.
+Locale resolveAppLocale(Locale? device) => const Locale('en');
+
 /// The app root. Plan 01-03 adds the localisation delegates (D-08).
 class RadioApp extends StatelessWidget {
   const RadioApp({super.key});
