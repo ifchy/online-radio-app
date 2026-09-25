@@ -137,29 +137,23 @@ void main() {
       },
     );
 
-    test(
-      'marks no stream cp1251: the owner ran no byte probe (2026-09-25, '
-      'option-a), so windows-1251 is covered by the 01-06 golden tests',
-      () {
-        expect(
-          _allStreams(release.all).map((s) => s.icyCharset),
-          everyElement(IcyCharset.auto),
-        );
-      },
-    );
+    test('marks no stream cp1251: the owner ran no byte probe (2026-09-25, '
+        'option-a), so windows-1251 is covered by the 01-06 golden tests', () {
+      expect(
+        _allStreams(release.all).map((s) => s.icyCharset),
+        everyElement(IcyCharset.auto),
+      );
+    });
 
-    test(
-      'ships no excluded station and no owner-rejected source '
-      '(N-JOY, Радио Витоша, stream.bnr.bg:8011)',
-      () {
-        final ids = release.all.map((s) => s.id.value);
-        expect(ids, isNot(contains('curated:njoy')));
-        expect(ids, isNot(contains('curated:vitosha')));
-        final hosts = _allStreams(release.all).map((s) => s.url.host);
-        expect(hosts, isNot(contains('stream.bnr.bg')));
-        expect(hosts, isNot(contains('live.btvradio.bg')));
-      },
-    );
+    test('ships no excluded station and no owner-rejected source '
+        '(N-JOY, Радио Витоша, stream.bnr.bg:8011)', () {
+      final ids = release.all.map((s) => s.id.value);
+      expect(ids, isNot(contains('curated:njoy')));
+      expect(ids, isNot(contains('curated:vitosha')));
+      final hosts = _allStreams(release.all).map((s) => s.url.host);
+      expect(hosts, isNot(contains('stream.bnr.bg')));
+      expect(hosts, isNot(contains('live.btvradio.bg')));
+    });
   });
 
   group('debug list (includeDebug: true)', () {
@@ -181,17 +175,20 @@ void main() {
       );
     });
 
-    test('dead-primary: an .invalid primary, then Радио 1\'s first http MP3', () {
-      final streams = _byKey(debug, 'debug:dead-primary').streams;
-      expect(streams, hasLength(2));
-      expect(streams[0].url.host, endsWith('.invalid'));
-      expect(streams[0].kind, StreamKind.progressive);
-      final radio1 = _byKey(release, 'curated:radio1').streams;
-      expect(streams[1], radio1[1]);
-      expect(streams[1].url.scheme, 'http');
-      expect(streams[1].codec, 'mp3');
-      expect(_allStreams(release.all), contains(streams[1]));
-    });
+    test(
+      'dead-primary: an .invalid primary, then Радио 1\'s first http MP3',
+      () {
+        final streams = _byKey(debug, 'debug:dead-primary').streams;
+        expect(streams, hasLength(2));
+        expect(streams[0].url.host, endsWith('.invalid'));
+        expect(streams[0].kind, StreamKind.progressive);
+        final radio1 = _byKey(release, 'curated:radio1').streams;
+        expect(streams[1], radio1[1]);
+        expect(streams[1].url.scheme, 'http');
+        expect(streams[1].codec, 'mp3');
+        expect(_allStreams(release.all), contains(streams[1]));
+      },
+    );
 
     test('slow-primary: a TEST-NET-1 primary, then БГ Радио\'s primary', () {
       final streams = _byKey(debug, 'debug:slow-primary').streams;

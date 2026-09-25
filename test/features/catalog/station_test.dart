@@ -29,8 +29,7 @@ void main() {
     });
 
     test('every id in the debug-inclusive directory round-trips', () {
-      final ids = StationDirectory.phase1(includeDebug: true)
-          .all
+      final ids = StationDirectory.phase1(includeDebug: true).all
           .map((s) => s.id.value)
           .toList();
       expect(ids, unorderedEquals(_phase1Ids));
@@ -42,10 +41,7 @@ void main() {
     test('curated and debug factories produce namespaced values', () {
       expect(StationId.curated('bnr-horizont').value, 'curated:bnr-horizont');
       expect(StationId.debug('dead-primary').value, 'debug:dead-primary');
-      expect(
-        StationId.parse('curated:radio1'),
-        StationId.curated('radio1'),
-      );
+      expect(StationId.parse('curated:radio1'), StationId.curated('radio1'));
       expect(
         StationId.parse('debug:dead-primary'),
         isNot(StationId.curated('dead-primary')),
@@ -85,18 +81,20 @@ void main() {
   });
 
   group('Station', () {
-    test('a station with an empty streams list is rejected with ArgumentError',
-        () {
-      expect(
-        () => Station(
-          id: StationId.curated('empty'),
-          name: 'Празна',
-          nameLatin: 'Empty',
-          streams: const [],
-        ),
-        throwsArgumentError,
-      );
-    });
+    test(
+      'a station with an empty streams list is rejected with ArgumentError',
+      () {
+        expect(
+          () => Station(
+            id: StationId.curated('empty'),
+            name: 'Празна',
+            nameLatin: 'Empty',
+            streams: const [],
+          ),
+          throwsArgumentError,
+        );
+      },
+    );
 
     test('a station with one stream keeps it as its primary', () {
       final station = Station(

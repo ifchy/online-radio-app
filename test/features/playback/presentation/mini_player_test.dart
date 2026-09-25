@@ -35,7 +35,12 @@ Map<String, String> _allStrings(AppLocalizations l) => {
 const _bg = Locale('bg');
 const _en = Locale('en');
 
-final Station _station = StationDirectory.phase1().all.first;
+/// These tests cover the home screen and mini-player, not the catalogue, so
+/// they run against a one-station list: БГ Радио from the Phase 1 directory.
+final Station _station = StationDirectory.phase1().byId(
+  StationId.curated('bg-radio'),
+)!;
+final StationDirectory _directory = StationDirectory([_station]);
 
 /// The mini-player where the home screen puts it.
 const _miniPlayerHost = Scaffold(
@@ -56,7 +61,7 @@ Future<void> _pumpMiniPlayer(
     ProviderScope(
       overrides: [
         audioEngineProvider.overrideWithValue(engine),
-        stationDirectoryProvider.overrideWithValue(StationDirectory.phase1()),
+        stationDirectoryProvider.overrideWithValue(_directory),
       ],
       child: MaterialApp(
         locale: locale,
