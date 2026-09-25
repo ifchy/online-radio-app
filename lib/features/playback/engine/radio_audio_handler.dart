@@ -26,6 +26,9 @@ import 'ports.dart';
 ///   the foreground service starts from the user action (Pitfall G).
 /// - Every load gets a new generation; events from older loads are dropped.
 /// - Focus is released on pause, stop and error (Pitfall F).
+/// - Now-playing (ICY) is cleared on every start, pause, stop and error, and
+///   only titles from the current load after it is ready are shown
+///   (Pitfall E).
 ///
 /// Reconnect, fallback rotation and interruptions arrive in later plans.
 class RadioAudioHandler extends BaseAudioHandler {
@@ -70,6 +73,11 @@ class RadioAudioHandler extends BaseAudioHandler {
   /// when playback of it fails.
   StationStream? _currentStream;
   int _generation = 0;
+
+  /// Whether the current generation's load has reported ready. ICY titles
+  /// that arrive earlier are dropped: the native player's ICY state survives
+  /// a load, so an early title can be the previous source's (Pitfall E).
+  bool _readySeenForGeneration = false;
 
   /// The list the current station was started from.
   PlayContext playContext = const PlayContext.single();
@@ -149,15 +157,16 @@ class RadioAudioHandler extends BaseAudioHandler {
   Future<void> pause() async {
     final station = _station;
     if (!_isActive || station == null) return;
-    _generation++;
+    _nextGeneration();
     _setStatus(PlaybackStatus.paused(station: station));
+    _setNowPlaying(null);
     await _player.stop();
     await _session.release();
   }
 
   @override
   Future<void> stop() async {
-    _generation++;
+    _nextGeneration();
     await _player.stop();
     await _session.release();
     _setStation(null);
@@ -165,10 +174,14 @@ class RadioAudioHandler extends BaseAudioHandler {
     // processingState idle: audio_service stops the service and removes the
     // notification.
     _setStatus(const PlaybackStatus.idle());
+    _setNowPlaying(null);
   }
 
   Future<void> _start(Station station) async {
-    final generation = ++_generation;
+    final generation = _nextGeneration();
+    // A new start never shows the previous title, not even for the moment
+    // the old transport takes to stop (STRM-05).
+    _setNowPlaying(null);
     await _player.stop();
     if (generation != _generation) return;
 
@@ -232,6 +245,9 @@ class RadioAudioHandler extends BaseAudioHandler {
 
   void _onSnapshot(PlayerSnapshot snapshot) {
     if (snapshot.generation != _generation) return;
+    if (snapshot.state == PlayerProcessingState.ready) {
+      _readySeenForGeneration = true;
+    }
     final ready =
         snapshot.state == PlayerProcessingState.ready && snapshot.playing;
     switch (_status) {
@@ -262,8 +278,12 @@ class RadioAudioHandler extends BaseAudioHandler {
   /// ICY "now playing" (RESEARCH Pattern 5). Only parseIcyTitle's output
   /// (repaired, sanitised, junk-filtered) ever reaches the media session;
   /// the raw title never does (T-08-01).
+  ///
+  /// Titles from a superseded load, or from the current load before its
+  /// first ready snapshot, are dropped (T-08-03). A junk title (null, empty,
+  /// '-', the station name, a URL) parses to null and clears the line.
   void _onIcyTitle(IcyTitle icy) {
-    if (icy.generation != _generation) return;
+    if (icy.generation != _generation || !_readySeenForGeneration) return;
     final station = _station;
     final stream = _currentStream;
     if (station == null || stream == null) return;
@@ -275,6 +295,9 @@ class RadioAudioHandler extends BaseAudioHandler {
   /// Publishes [value] when it differs from the last one (NowPlaying value
   /// equality). Each media-item update redraws the notification, so an
   /// unchanged title republishes nothing (Anti-Pattern 9, T-08-02).
+  ///
+  /// `_setNowPlaying(null)` is the clear: every start or switch, pause, stop
+  /// and failure calls it.
   void _setNowPlaying(NowPlaying? value) {
     if (value == _nowPlaying) return;
     _nowPlaying = value;
@@ -303,12 +326,20 @@ class RadioAudioHandler extends BaseAudioHandler {
     PlaybackErrorKind kind, {
     bool invalidate = true,
   }) async {
-    _generation++;
+    _nextGeneration();
     final stream = _currentStream;
     if (invalidate && stream != null) _resolver.invalidate(stream);
     _setStatus(PlaybackStatus.error(station: station, kind: kind));
+    _setNowPlaying(null);
     await _player.stop();
     await _session.release();
+  }
+
+  /// Supersedes the current load: its events are dropped from now on, and
+  /// the next load must report ready before its ICY titles are shown.
+  int _nextGeneration() {
+    _readySeenForGeneration = false;
+    return ++_generation;
   }
 
   /// Publishes [status] to the media session and the app. The media item
