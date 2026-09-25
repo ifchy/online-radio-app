@@ -10,7 +10,9 @@ library;
 import '../../catalog/domain/station.dart';
 import '../domain/play_context.dart';
 import '../domain/playback_status.dart';
+import '../domain/retry_budget.dart';
 import 'ports.dart';
+import 'reconnect_policy.dart';
 
 /// Timings and limits of the state machine, in one place so they can be tuned
 /// on a device (RESEARCH lines 336-341, Claude's discretion).
@@ -18,6 +20,8 @@ final class EngineTimings {
   const EngineTimings({
     this.connectTimeout = const Duration(seconds: 10),
     this.maxDeadOnArrivalRounds = 2,
+    this.stallTimeout = const Duration(seconds: 8),
+    this.stablePlayingReset = const Duration(seconds: 30),
   });
 
   /// How long one attempt (resolve plus load) may take to produce audio
@@ -27,11 +31,18 @@ final class EngineTimings {
   /// How many full passes over a station's streams are made before a station
   /// that never played is given up as dead (PLAY-08).
   final int maxDeadOnArrivalRounds;
+
+  /// How long Playing may sit in Buffering before the stream is reloaded.
+  final Duration stallTimeout;
+
+  /// How long playback must be stable before the backoff and the retry
+  /// budget reset.
+  final Duration stablePlayingReset;
 }
 
 /// The timers the handler runs for the state machine. Plans 01-10 and 01-12
 /// add more kinds.
-enum TimerKind { connect }
+enum TimerKind { connect, stall, backoff, stablePlaying, budget }
 
 /// Everything the reducer knows. Immutable; [copyWith] builds the next one.
 final class EngineState {
@@ -49,6 +60,8 @@ final class EngineState {
     this.connectStartedAt,
     this.startStreamIndex = 0,
     this.onlyFormatFailures = true,
+    this.budget = const RetryBudgetClock(),
+    this.attempt = 0,
   });
 
   /// Nothing loaded, generation 0.
@@ -97,6 +110,12 @@ final class EngineState {
   /// station is given up.
   final bool onlyFormatFailures;
 
+  /// The retry budget of the current outage (D-10).
+  final RetryBudgetClock budget;
+
+  /// Reconnect retries started in the current outage.
+  final int attempt;
+
   /// The stream being tried or played, or null when idle.
   StationStream? get currentStream => station?.streams[streamIndex];
 
@@ -118,6 +137,8 @@ final class EngineState {
     Object? connectStartedAt = _unset,
     int? startStreamIndex,
     bool? onlyFormatFailures,
+    RetryBudgetClock? budget,
+    int? attempt,
   }) => EngineState(
     status: status ?? this.status,
     station: identical(station, _unset) ? this.station : station as Station?,
@@ -136,6 +157,8 @@ final class EngineState {
         : connectStartedAt as DateTime?,
     startStreamIndex: startStreamIndex ?? this.startStreamIndex,
     onlyFormatFailures: onlyFormatFailures ?? this.onlyFormatFailures,
+    budget: budget ?? this.budget,
+    attempt: attempt ?? this.attempt,
   );
 
   @override
@@ -268,6 +291,16 @@ final class TimerFired extends EngineEvent {
 
   @override
   String toString() => 'TimerFired(${kind.name}, gen $generation)';
+}
+
+/// The reconnect give-up policy changed (D-10).
+final class SetRetryBudget extends EngineEvent {
+  const SetRetryBudget(this.preset);
+
+  final RetryBudgetPreset preset;
+
+  @override
+  String toString() => 'SetRetryBudget(${preset.name})';
 }
 
 // ---------------------------------------------------------------------------
@@ -482,8 +515,12 @@ final class Transition {
 ///   nothing, and only UserPlay and UserResume start playback from Paused,
 ///   Idle or Error.
 class PlaybackStateMachine {
-  const PlaybackStateMachine({this.timings = const EngineTimings()});
+  const PlaybackStateMachine({
+    required this.policy,
+    this.timings = const EngineTimings(),
+  });
 
+  final ReconnectPolicy policy;
   final EngineTimings timings;
 
   Transition transition(EngineState state, EngineEvent event, DateTime now) =>
@@ -512,6 +549,7 @@ class PlaybackStateMachine {
                   state.status is Connecting
               ? _nextCandidate(state, formatFailure: false)
               : _unchanged(state),
+        SetRetryBudget() => _unchanged(state),
       };
 
   static Transition _unchanged(EngineState state) =>

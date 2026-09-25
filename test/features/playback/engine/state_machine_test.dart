@@ -1,11 +1,17 @@
 // The pure PlaybackStateMachine: one test per behaviour row, asserting the
 // next state and the exact command sequence (RESEARCH Pattern 2,
 // ARCHITECTURE Pattern 3). No fakes, no timers: the reducer is a function.
+import 'dart:math';
+
+import 'package:audio_service/audio_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:radio/features/catalog/domain/station.dart';
 import 'package:radio/features/playback/domain/play_context.dart';
 import 'package:radio/features/playback/domain/playback_status.dart';
+import 'package:radio/features/playback/domain/retry_budget.dart';
+import 'package:radio/features/playback/engine/media_session_mapping.dart';
 import 'package:radio/features/playback/engine/ports.dart';
+import 'package:radio/features/playback/engine/reconnect_policy.dart';
 import 'package:radio/features/playback/engine/state_machine.dart';
 
 StationStream _stream(String url, [StreamKind kind = StreamKind.progressive]) =>
@@ -32,7 +38,10 @@ final _single = Station(
   streams: [_only],
 );
 
-const _machine = PlaybackStateMachine();
+/// No jitter, so every backoff is its exact base delay.
+final _machine = PlaybackStateMachine(
+  policy: ReconnectPolicy(Random(0), jitter: 0),
+);
 const _timeout = Duration(seconds: 10);
 final _t0 = DateTime.utc(2026, 9, 25, 12);
 
@@ -81,8 +90,9 @@ EngineState _playing(EngineState state, [DateTime? at]) {
 
 void main() {
   group('UserPlay starts a station', () {
-    test('from Idle: Connecting(stream 0, round 0), then StopTransport, '
-        'ClearNowPlaying, StartTimer(connect, 10 s) and Resolve', () {
+    test('from Idle: Connecting(stream 0, round 0), then CancelAllTimers, '
+        'StopTransport, ClearNowPlaying, StartTimer(connect, 10 s) and '
+        'Resolve', () {
       final t = _run(const EngineState.initial(), UserPlay(_three));
       expect(
         t.next.status,
@@ -92,6 +102,7 @@ void main() {
       expect(t.next.generation, 1);
       expect(t.next.connectStartedAt, _t0);
       expect(t.commands, [
+        const CancelAllTimers(),
         const StopTransport(),
         const ClearNowPlaying(),
         const StartTimer(TimerKind.connect, _timeout, 1),
@@ -113,6 +124,7 @@ void main() {
       expect(t.next.lastWorkingStreamIndex, isNull);
       expect(t.next.candidates, isEmpty);
       expect(t.commands, [
+        const CancelAllTimers(),
         const StopTransport(),
         const ClearNowPlaying(),
         StartTimer(TimerKind.connect, _timeout, t.next.generation),
@@ -367,8 +379,8 @@ void main() {
       );
     });
 
-    test('a station that already played this session errors after one round '
-        '(streamUnreachable); 01-10 turns this row into Reconnecting', () {
+    test('a station that already played this session is not given up when '
+        'a round ends: it goes to Reconnecting (01-10)', () {
       var s = _started(_three).copyWith(everPlayed: true);
       s = _failCurrent(s);
       s = _failCurrent(s);
@@ -376,11 +388,9 @@ void main() {
       s = _failCurrent(s);
       expect(
         s.status,
-        PlaybackStatus.error(
-          station: _three,
-          kind: PlaybackErrorKind.streamUnreachable,
-        ),
+        isA<Reconnecting>().having((r) => r.attempt, 'attempt', 0),
       );
+      expect(s.budget.running, isTrue);
     });
   });
 
@@ -456,7 +466,8 @@ void main() {
   });
 
   group('Playing and Buffering', () {
-    test('buffering -> Buffering, ready again -> Playing, no commands', () {
+    test('buffering -> Buffering with the 8 s stall timer; ready again -> '
+        'Playing with the stall timer cancelled', () {
       final playing = _playing(_started(_three));
       final g = playing.generation;
       final buffering = _run(
@@ -467,7 +478,9 @@ void main() {
         buffering.next.status,
         PlaybackStatus.buffering(station: _three, streamIndex: 0),
       );
-      expect(buffering.commands, isEmpty);
+      expect(buffering.commands, [
+        StartTimer(TimerKind.stall, const Duration(seconds: 8), g),
+      ]);
       final again = _run(
         buffering.next,
         PlayerStateChanged(g, PlayerProcessingState.ready, playing: true),
@@ -476,7 +489,7 @@ void main() {
         again.next.status,
         PlaybackStatus.playing(station: _three, streamIndex: 0),
       );
-      expect(again.commands, isEmpty);
+      expect(again.commands, [const CancelTimer(TimerKind.stall)]);
     });
 
     for (final (label, event) in [
@@ -492,7 +505,8 @@ void main() {
     ]) {
       for (final buffering in [false, true]) {
         test('$label while ${buffering ? 'Buffering' : 'Playing'} -> '
-            'Error(streamUnreachable), invalidating the stream', () {
+            'Reconnecting(attempt 0), invalidating the stream, with an '
+            'immediate retry and the budget timer (PLAY-07)', () {
           var s = _playing(_started(_three));
           if (buffering) {
             s = _run(
@@ -507,19 +521,24 @@ void main() {
           final t = _run(s, event(s.generation));
           expect(
             t.next.status,
-            PlaybackStatus.error(
+            PlaybackStatus.reconnecting(
               station: _three,
-              kind: PlaybackErrorKind.streamUnreachable,
+              attempt: 0,
+              nextAttemptAt: _t0,
             ),
           );
-          expect(t.next.generation, s.generation + 1);
+          final g = s.generation + 1;
+          expect(t.next.generation, g);
           expect(t.commands, [
             const CancelAllTimers(),
-            InvalidateResolution(_s0),
             const ClearNowPlaying(),
             const StopTransport(),
-            const ReleaseFocus(),
+            InvalidateResolution(_s0),
+            StartTimer(TimerKind.backoff, Duration.zero, g),
+            StartTimer(TimerKind.budget, const Duration(minutes: 3), g),
           ]);
+          expect(t.commands.whereType<ReleaseFocus>(), isEmpty);
+          expect(t.next.budget.outageStartedAt, _t0);
         });
       }
     }
@@ -541,6 +560,10 @@ void main() {
       ),
       'PlayerFailed': const PlayerFailed(1, 0),
       'TimerFired': const TimerFired(TimerKind.connect, 1),
+      'TimerFired stall': const TimerFired(TimerKind.stall, 1),
+      'TimerFired backoff': const TimerFired(TimerKind.backoff, 1),
+      'TimerFired stablePlaying': const TimerFired(TimerKind.stablePlaying, 1),
+      'TimerFired budget': const TimerFired(TimerKind.budget, 1),
     };
     for (final MapEntry(key: label, value: event) in stale.entries) {
       test('$label from generation 1 while Connecting generation 2', () {
@@ -619,6 +642,7 @@ void main() {
       expect(t.next.connectStartedAt, t1);
       expect(t.next.generation, s.generation + 1);
       expect(t.commands, [
+        const CancelAllTimers(),
         const StopTransport(),
         const ClearNowPlaying(),
         StartTimer(TimerKind.connect, _timeout, t.next.generation),
@@ -677,7 +701,7 @@ void main() {
             playing: false,
           ),
           PlayerFailed(g, 0),
-          TimerFired(TimerKind.connect, g),
+          for (final kind in TimerKind.values) TimerFired(kind, g),
           const UserPause(),
         ]) {
           final t = _run(s, event);
@@ -719,10 +743,29 @@ void main() {
           playing: true,
         ),
       );
+      // A drop, the reconnect and its retry (PLAY-07) never seek either.
+      apply(PlayerFailed(s.generation, 0));
+      apply(TimerFired(TimerKind.backoff, s.generation));
+      apply(Resolved(s.generation, [_candidate('http://a.example/')]));
+      apply(
+        PlayerStateChanged(
+          s.generation,
+          PlayerProcessingState.ready,
+          playing: true,
+        ),
+      );
+      apply(
+        PlayerStateChanged(
+          s.generation,
+          PlayerProcessingState.buffering,
+          playing: true,
+        ),
+      );
+      apply(TimerFired(TimerKind.stall, s.generation));
       apply(const UserPause());
       apply(const UserResume());
       apply(const UserStop());
-      expect(commands, hasLength(greaterThan(10)));
+      expect(commands, hasLength(greaterThan(20)));
       expect(
         commands.every(
           (c) => switch (c) {
@@ -740,6 +783,506 @@ void main() {
         ),
         isTrue,
       );
+    });
+  });
+
+  group('reconnect after a drop or a stall (PLAY-07, PLAY-11)', () {
+    const sec = Duration(seconds: 1);
+    const min = Duration(minutes: 1);
+
+    PlayerStateChanged snapshot(
+      EngineState s,
+      PlayerProcessingState state, {
+      bool playing = true,
+    }) => PlayerStateChanged(s.generation, state, playing: playing);
+
+    /// [s] (Playing or Buffering) after the server drops it at [at].
+    EngineState drop(EngineState s, [DateTime? at]) =>
+        _run(s, PlayerFailed(s.generation, 0), at).next;
+
+    /// Reconnecting [s] after its backoff timer fires at [at].
+    EngineState fireBackoff(EngineState s, [DateTime? at]) =>
+        _run(s, TimerFired(TimerKind.backoff, s.generation), at).next;
+
+    test('the stall timer firing in Buffering: StopTransport and '
+        'Reconnecting(attempt 0) with an immediate retry, then a fresh load '
+        'at the live edge with a new generation', () {
+      var s = _playing(_started(_three));
+      s = _run(s, snapshot(s, PlayerProcessingState.buffering)).next;
+      final t8 = _t0.add(sec * 8);
+      final t = _run(s, TimerFired(TimerKind.stall, s.generation), t8);
+      final g = s.generation + 1;
+      expect(
+        t.next.status,
+        PlaybackStatus.reconnecting(
+          station: _three,
+          attempt: 0,
+          nextAttemptAt: t8,
+        ),
+      );
+      expect(t.next.generation, g);
+      // A stall is not a bad URL: the resolution is kept.
+      expect(t.commands, [
+        const CancelAllTimers(),
+        const ClearNowPlaying(),
+        const StopTransport(),
+        StartTimer(TimerKind.backoff, Duration.zero, g),
+        StartTimer(TimerKind.budget, const Duration(minutes: 3), g),
+      ]);
+
+      final r = _run(t.next, TimerFired(TimerKind.backoff, g), t8);
+      expect(
+        r.next.status,
+        PlaybackStatus.connecting(station: _three, streamIndex: 0, round: 0),
+      );
+      expect(r.next.generation, g + 1);
+      expect(r.next.attempt, 1);
+      expect(r.commands, [
+        StartTimer(TimerKind.connect, _timeout, g + 1),
+        Resolve(_s0, g + 1),
+      ]);
+    });
+
+    test('a ready snapshot within 8 s wins: a stall timer firing afterwards '
+        'changes nothing', () {
+      var s = _playing(_started(_three));
+      s = _run(s, snapshot(s, PlayerProcessingState.buffering)).next;
+      s = _run(s, snapshot(s, PlayerProcessingState.ready)).next;
+      expect(s.status, isA<Playing>());
+      final t = _run(s, TimerFired(TimerKind.stall, s.generation));
+      expect(t.next, same(s));
+      expect(t.commands, isEmpty);
+    });
+
+    test('a second trigger in the same outage finds a new generation and '
+        'emits no Load', () {
+      var s = _playing(_started(_three));
+      s = _run(s, snapshot(s, PlayerProcessingState.buffering)).next;
+      final buffering = s.generation;
+      s = _run(s, TimerFired(TimerKind.stall, buffering)).next;
+      for (final late in <EngineEvent>[
+        PlayerFailed(buffering, 0),
+        PlayerStateChanged(
+          buffering,
+          PlayerProcessingState.completed,
+          playing: false,
+        ),
+        TimerFired(TimerKind.stall, buffering),
+      ]) {
+        final t = _run(s, late);
+        expect(t.next, same(s), reason: '$late');
+        expect(t.commands, isEmpty, reason: '$late');
+      }
+    });
+
+    test('the retry starts at the stream that last worked, then rotates; '
+        'a failed round backs off as the next attempt', () {
+      var s = _playing(_failCurrent(_started(_three)));
+      expect(s.lastWorkingStreamIndex, 1);
+      s = fireBackoff(drop(s));
+      expect(
+        s.status,
+        PlaybackStatus.connecting(station: _three, streamIndex: 1, round: 0),
+      );
+      s = _failCurrent(s);
+      expect(
+        s.status,
+        PlaybackStatus.connecting(station: _three, streamIndex: 2, round: 0),
+      );
+      s = _failCurrent(s);
+      expect(
+        s.status,
+        PlaybackStatus.connecting(station: _three, streamIndex: 0, round: 0),
+      );
+      expect(s.attempt, 1);
+      s = _failCurrent(s);
+      expect(
+        s.status,
+        PlaybackStatus.reconnecting(
+          station: _three,
+          attempt: 1,
+          nextAttemptAt: _t0.add(sec),
+        ),
+      );
+      s = fireBackoff(s);
+      expect(
+        s.status,
+        PlaybackStatus.connecting(station: _three, streamIndex: 1, round: 0),
+      );
+      expect(s.attempt, 2);
+    });
+
+    test('backoff per attempt: 0, 1, 2, 4, 8, 15, 30, 30 s', () {
+      var now = _t0;
+      var s = drop(_playing(_started(_single)), now);
+      final delays = <Duration>[];
+      for (var i = 0; i < 8; i++) {
+        final r = s.status as Reconnecting;
+        delays.add(r.nextAttemptAt!.difference(now));
+        now = r.nextAttemptAt!;
+        s = _run(s, TimerFired(TimerKind.backoff, s.generation), now).next;
+        expect(s.status, isA<Connecting>());
+        s = _run(
+          s,
+          Resolved(s.generation, [_candidate('http://x/')]),
+          now,
+        ).next;
+        s = _run(s, PlayerFailed(s.generation, 0), now).next;
+      }
+      expect(delays, [
+        for (final n in [0, 1, 2, 4, 8, 15, 30, 30]) sec * n,
+      ]);
+      expect(s.status, isA<Reconnecting>());
+    });
+
+    test('Reconnecting and a retry Connecting publish playing true, so the '
+        'foreground service stays (Pitfall 1)', () {
+      final reconnecting = drop(_playing(_started(_single)));
+      final state = playbackStateFor(reconnecting.status);
+      expect(state.playing, isTrue);
+      expect(state.processingState, AudioProcessingState.buffering);
+      final retry = fireBackoff(reconnecting);
+      expect(retry.status, isA<Connecting>());
+      expect(playbackStateFor(retry.status).playing, isTrue);
+    });
+
+    test('standard budget: 3 min of failing online -> '
+        'PlaybackError(streamUnreachable) with everything released', () {
+      final s = drop(_playing(_started(_single)));
+      final g = s.generation;
+      // A budget timer that fires a little early re-arms for the rest.
+      final early = _run(
+        s,
+        TimerFired(TimerKind.budget, g),
+        _t0.add(min * 3 - sec),
+      );
+      expect(early.next, same(s));
+      expect(early.commands, [StartTimer(TimerKind.budget, sec, g)]);
+
+      final t = _run(s, TimerFired(TimerKind.budget, g), _t0.add(min * 3));
+      expect(
+        t.next.status,
+        PlaybackStatus.error(
+          station: _single,
+          kind: PlaybackErrorKind.streamUnreachable,
+        ),
+      );
+      expect(t.commands, [
+        const CancelAllTimers(),
+        InvalidateResolution(_only),
+        const ClearNowPlaying(),
+        const StopTransport(),
+        const ReleaseFocus(),
+      ]);
+      expect(playbackStateFor(t.next.status).playing, isFalse);
+      expect(t.next.budget.active, isFalse);
+      expect(t.next.attempt, 0);
+    });
+
+    test('the budget timer spans the retries of one outage (their '
+        'generations do not make it stale)', () {
+      var s = drop(_playing(_started(_single)));
+      final first = s.generation;
+      s = fireBackoff(s);
+      s = _run(s, Resolved(s.generation, [_candidate('http://x/')])).next;
+      expect(s.generation, greaterThan(first));
+      final t = _run(s, TimerFired(TimerKind.budget, first), _t0.add(min * 3));
+      expect(t.next.status, isA<PlaybackError>());
+    });
+
+    test('a backoff firing after the budget ran out gives up instead of '
+        'retrying', () {
+      final s = drop(_playing(_started(_single)));
+      final t = _run(
+        s,
+        TimerFired(TimerKind.backoff, s.generation),
+        _t0.add(min * 3),
+      );
+      expect(t.next.status, isA<PlaybackError>());
+      expect(t.commands.whereType<Load>(), isEmpty);
+      expect(t.commands.whereType<Resolve>(), isEmpty);
+      expect(t.commands, contains(const ReleaseFocus()));
+    });
+
+    test('a retry that fails after the budget ran out gives up at once', () {
+      var s = fireBackoff(drop(_playing(_started(_single))));
+      s = _run(s, Resolved(s.generation, [_candidate('http://x/')])).next;
+      final t = _run(
+        s,
+        PlayerFailed(s.generation, 0),
+        _t0.add(min * 3 + sec * 5),
+      );
+      expect(
+        t.next.status,
+        PlaybackStatus.error(
+          station: _single,
+          kind: PlaybackErrorKind.streamUnreachable,
+        ),
+      );
+    });
+
+    test('30 s of stable Playing resets the budget and the attempt counter; '
+        'a drop before that continues the backoff', () {
+      var s = fireBackoff(drop(_playing(_started(_single))));
+      s = _run(s, Resolved(s.generation, [_candidate('http://x/')])).next;
+      final g = s.generation;
+      final back = _run(
+        s,
+        PlayerStateChanged(g, PlayerProcessingState.ready, playing: true),
+        _t0.add(sec * 2),
+      );
+      expect(back.next.status, isA<Playing>());
+      expect(back.commands, [
+        const CancelTimer(TimerKind.connect),
+        const CancelTimer(TimerKind.budget),
+        StartTimer(TimerKind.stablePlaying, const Duration(seconds: 30), g),
+      ]);
+      expect(back.next.attempt, 1);
+      expect(back.next.budget.active, isTrue);
+      expect(back.next.budget.running, isFalse);
+
+      // Dropped again after 20 s: attempt 1 (1 s), and the 2 s already
+      // spent still count against the budget.
+      final early = _run(back.next, PlayerFailed(g, 0), _t0.add(sec * 22));
+      expect(
+        early.next.status,
+        PlaybackStatus.reconnecting(
+          station: _single,
+          attempt: 1,
+          nextAttemptAt: _t0.add(sec * 23),
+        ),
+      );
+      expect(
+        early.commands.last,
+        StartTimer(
+          TimerKind.budget,
+          const Duration(minutes: 3) - sec * 2,
+          g + 1,
+        ),
+      );
+
+      // Stable for 30 s: everything resets.
+      final stable = _run(
+        back.next,
+        TimerFired(TimerKind.stablePlaying, g),
+        _t0.add(sec * 32),
+      );
+      expect(stable.commands, isEmpty);
+      expect(stable.next.status, back.next.status);
+      expect(stable.next.attempt, 0);
+      expect(stable.next.budget.active, isFalse);
+      final later = _run(stable.next, PlayerFailed(g, 0), _t0.add(min));
+      expect(
+        later.next.status,
+        PlaybackStatus.reconnecting(
+          station: _single,
+          attempt: 0,
+          nextAttemptAt: _t0.add(min),
+        ),
+      );
+      expect(
+        later.commands.last,
+        StartTimer(TimerKind.budget, const Duration(minutes: 3), g + 1),
+      );
+    });
+
+    test('buffering during the stable period restarts it', () {
+      var s = fireBackoff(drop(_playing(_started(_single))));
+      s = _playing(s);
+      final g = s.generation;
+      final buffering = _run(s, snapshot(s, PlayerProcessingState.buffering));
+      expect(buffering.commands, [
+        const CancelTimer(TimerKind.stablePlaying),
+        StartTimer(TimerKind.stall, const Duration(seconds: 8), g),
+      ]);
+      final ready = _run(
+        buffering.next,
+        snapshot(buffering.next, PlayerProcessingState.ready),
+      );
+      expect(ready.commands, [
+        const CancelTimer(TimerKind.stall),
+        StartTimer(TimerKind.stablePlaying, const Duration(seconds: 30), g),
+      ]);
+    });
+
+    test('a stable timer from before a drop changes nothing', () {
+      var s = fireBackoff(drop(_playing(_started(_single))));
+      s = _playing(s);
+      final g = s.generation;
+      final dropped = drop(s);
+      final t = _run(dropped, TimerFired(TimerKind.stablePlaying, g));
+      expect(t.next, same(dropped));
+    });
+  });
+
+  group('the retry budget setting (D-10)', () {
+    const min = Duration(minutes: 1);
+
+    test('setRetryBudget(batterySaver) during Playing: the next outage gives '
+        'up after 1 min online', () {
+      var s = _playing(_started(_single));
+      final set = _run(s, const SetRetryBudget(RetryBudgetPreset.batterySaver));
+      expect(set.commands, isEmpty);
+      expect(set.next.budget.preset, RetryBudgetPreset.batterySaver);
+      expect(set.next.status, s.status);
+      s = set.next;
+      final dropped = _run(s, PlayerFailed(s.generation, 0));
+      expect(
+        dropped.commands.last,
+        StartTimer(TimerKind.budget, min, dropped.next.generation),
+      );
+      final before = _run(
+        dropped.next,
+        TimerFired(TimerKind.budget, dropped.next.generation),
+        _t0.add(min - const Duration(seconds: 1)),
+      );
+      expect(before.next.status, isA<Reconnecting>());
+      final t = _run(
+        dropped.next,
+        TimerFired(TimerKind.budget, dropped.next.generation),
+        _t0.add(min),
+      );
+      expect(
+        t.next.status,
+        PlaybackStatus.error(
+          station: _single,
+          kind: PlaybackErrorKind.streamUnreachable,
+        ),
+      );
+    });
+
+    test('a change during Reconnecting re-arms the budget timer for what is '
+        'left under the new preset', () {
+      final s = _run(_playing(_started(_single)), PlayerFailed(1, 0)).next;
+      final t = _run(
+        s,
+        const SetRetryBudget(RetryBudgetPreset.batterySaver),
+        _t0.add(const Duration(seconds: 20)),
+      );
+      expect(t.commands, [
+        StartTimer(TimerKind.budget, const Duration(seconds: 40), s.generation),
+      ]);
+      final trip = _run(
+        s,
+        const SetRetryBudget(RetryBudgetPreset.trip),
+        _t0.add(const Duration(seconds: 20)),
+      );
+      expect(trip.commands, [
+        StartTimer(
+          TimerKind.budget,
+          const Duration(minutes: 5) - const Duration(seconds: 20),
+          s.generation,
+        ),
+      ]);
+    });
+
+    test('the preset survives new sessions, pause and stop', () {
+      var s = _run(
+        const EngineState.initial(),
+        const SetRetryBudget(RetryBudgetPreset.trip),
+      ).next;
+      s = _playing(_run(s, UserPlay(_three)).next);
+      s = _run(s, const UserPause()).next;
+      s = _run(s, const UserResume()).next;
+      s = _run(s, const UserStop()).next;
+      s = _run(s, UserPlay(_single)).next;
+      expect(s.budget.preset, RetryBudgetPreset.trip);
+    });
+  });
+
+  group('user commands win over a reconnect (PLAY-10)', () {
+    const stopAll = [
+      CancelAllTimers(),
+      ClearNowPlaying(),
+      StopTransport(),
+      ReleaseFocus(),
+    ];
+
+    EngineState reconnecting() =>
+        _run(_playing(_started(_three)), PlayerFailed(1, 0)).next;
+
+    for (final (label, command, expected)
+        in <(String, EngineEvent, PlaybackStatus)>[
+          (
+            'UserPause',
+            const UserPause(),
+            PlaybackStatus.paused(station: _three),
+          ),
+          ('UserStop', const UserStop(), const PlaybackStatus.idle()),
+        ]) {
+      test('$label during Reconnecting cancels the backoff, stall and budget '
+          'timers; no later timer or result starts anything', () {
+        final s = reconnecting();
+        final t = _run(s, command);
+        expect(t.next.status, expected);
+        expect(t.commands, stopAll);
+        expect(t.next.budget.active, isFalse);
+        expect(t.next.attempt, 0);
+        for (final late in <EngineEvent>[
+          for (final kind in TimerKind.values) ...[
+            TimerFired(kind, s.generation),
+            TimerFired(kind, t.next.generation),
+          ],
+          Resolved(s.generation, [_candidate('http://late.example/')]),
+          PlayerStateChanged(
+            s.generation,
+            PlayerProcessingState.ready,
+            playing: true,
+          ),
+        ]) {
+          final after = _run(
+            t.next,
+            late,
+            _t0.add(const Duration(minutes: 10)),
+          );
+          expect(after.next, same(t.next), reason: '$late');
+          expect(after.commands, isEmpty, reason: '$late');
+        }
+      });
+
+      test('$label while a retry is resolving: the result is dropped and '
+          'never loads', () {
+        var s = reconnecting();
+        s = _run(s, TimerFired(TimerKind.backoff, s.generation)).next;
+        expect(s.status, isA<Connecting>());
+        final retry = s.generation;
+        final t = _run(s, command);
+        final late = _run(
+          t.next,
+          Resolved(retry, [_candidate('http://late.example/')]),
+        );
+        expect(late.next, same(t.next));
+        expect(late.commands, isEmpty);
+      });
+    }
+
+    test('UserPlay of another station during Reconnecting wins: timers '
+        'cancelled, a fresh session, the old timers stale', () {
+      final s = reconnecting();
+      final t = _run(s, UserPlay(_single));
+      expect(
+        t.next.status,
+        PlaybackStatus.connecting(station: _single, streamIndex: 0, round: 0),
+      );
+      expect(t.commands.first, const CancelAllTimers());
+      expect(t.next.budget.active, isFalse);
+      expect(t.next.attempt, 0);
+      for (final kind in TimerKind.values) {
+        final late = _run(
+          t.next,
+          TimerFired(kind, s.generation),
+          _t0.add(const Duration(minutes: 10)),
+        );
+        expect(late.next, same(t.next), reason: kind.name);
+        expect(late.commands, isEmpty, reason: kind.name);
+      }
+    });
+
+    test('resume during Reconnecting does nothing (it is already trying)', () {
+      final s = reconnecting();
+      final t = _run(s, const UserResume());
+      expect(t.next, same(s));
+      expect(t.commands, isEmpty);
     });
   });
 }

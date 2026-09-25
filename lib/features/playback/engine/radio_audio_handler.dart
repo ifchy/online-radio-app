@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:collection';
+import 'dart:math';
 
 import 'package:audio_service/audio_service.dart';
 import 'package:clock/clock.dart';
@@ -16,6 +17,7 @@ import '../domain/retry_budget.dart';
 import 'icy/now_playing_parser.dart';
 import 'media_session_mapping.dart';
 import 'ports.dart';
+import 'reconnect_policy.dart';
 import 'state_machine.dart';
 
 /// The audio_service handler: the single owner of playback.
@@ -57,7 +59,11 @@ class RadioAudioHandler extends BaseAudioHandler {
     EngineTimings timings = const EngineTimings(),
     Clock? clock,
     RetryBudgetPreset initialRetryBudget = RetryBudgetPreset.standard,
-  }) : _machine = PlaybackStateMachine(timings: timings),
+    ReconnectPolicy? reconnectPolicy,
+  }) : _machine = PlaybackStateMachine(
+         policy: reconnectPolicy ?? ReconnectPolicy(Random()),
+         timings: timings,
+       ),
        _clockOverride = clock,
        _retryBudget = initialRetryBudget {
     _subscriptions.addAll([

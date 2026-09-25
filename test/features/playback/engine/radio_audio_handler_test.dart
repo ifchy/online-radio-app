@@ -1,6 +1,7 @@
 // RadioAudioHandler with the native player and audio session faked and a real
 // HttpStreamResolver over a MockClient. Later plans extend this file.
 import 'dart:async';
+import 'dart:math';
 
 import 'package:audio_service/audio_service.dart';
 import 'package:clock/clock.dart';
@@ -23,6 +24,7 @@ import 'package:radio/features/playback/domain/retry_budget.dart';
 import 'package:radio/features/playback/engine/audio_service_engine.dart';
 import 'package:radio/features/playback/engine/ports.dart';
 import 'package:radio/features/playback/engine/radio_audio_handler.dart';
+import 'package:radio/features/playback/engine/reconnect_policy.dart';
 import 'package:radio/features/playback/engine/resolver/stream_resolver.dart';
 import 'package:radio/l10n/app_localizations.dart';
 
@@ -218,7 +220,8 @@ void main() {
       },
     );
 
-    test('a player failure invalidates the playing stream', () async {
+    test('a player failure invalidates the playing stream and reconnects '
+        '(PLAY-07)', () async {
       final (handler, resolver) = build(
         MockClient(
           (request) async =>
@@ -233,9 +236,14 @@ void main() {
         generation: generation,
       );
       player.emitFailure(generation: generation);
+      expect(handler.status, isA<Reconnecting>());
       await pumpEventQueue();
       expect(resolver.invalidated, contains(njoy.streams.first));
-      expect(handler.status, isA<PlaybackError>());
+      // The immediate retry is a fresh load of the same stream.
+      expect(handler.status, isA<Connecting>());
+      expect(player.loads, hasLength(2));
+      expect(player.lastLoad.generation, greaterThan(generation));
+      expect(handler.playbackState.value.playing, isTrue);
     });
   });
   group('media item republishing (Anti-Pattern 9, T-07-03)', () {
@@ -534,16 +542,22 @@ void main() {
         expect(handler.mediaItem.value, isNull);
       });
 
-      test('a player failure clears now-playing', () async {
+      test('a player failure clears now-playing while reconnecting', () async {
         final (handler, generation, emitted) = await playingWithTitle();
 
         player.emitFailure(generation: generation);
+        expect(handler.status, isA<Reconnecting>());
+        expect(handler.mediaItem.value?.displaySubtitle, 'Reconnecting…');
         await pumpEventQueue();
 
-        expect(handler.status, isA<PlaybackError>());
         expect(emitted.last, isNull);
         expect(handler.nowPlaying, isNull);
-        expect(handler.mediaItem.value?.displaySubtitle, 'Error');
+        // Reconnecting, or already its immediate retry: never the old title.
+        expect(
+          handler.mediaItem.value?.displaySubtitle,
+          isIn(['Reconnecting…', 'Connecting…']),
+        );
+        expect(handler.playbackState.value.playing, isTrue);
       });
 
       for (final (label, junk) in [
@@ -1141,4 +1155,387 @@ void main() {
       expect(fake.retryBudgetCalls, [RetryBudgetPreset.batterySaver]);
     });
   });
+
+  group(
+    'reconnect after a drop (PLAY-07, PLAY-10, PLAY-11), under fakeAsync',
+    () {
+      StationStream progressive(String url) =>
+          StationStream(url: Uri.parse(url), kind: StreamKind.progressive);
+
+      final primary = progressive('http://primary.example/live');
+      final fallback = progressive('http://fallback.example/live');
+      final twoStreams = Station(
+        id: StationId.debug('two'),
+        name: 'Два потока',
+        nameLatin: 'Dva potoka',
+        streams: [primary, fallback],
+      );
+      final only = progressive('https://only.example/live.mp3');
+      final oneStream = Station(
+        id: StationId.debug('one'),
+        name: 'Един поток',
+        nameLatin: 'Edin potok',
+        streams: [only],
+      );
+      final other = Station(
+        id: StationId.debug('other'),
+        name: 'Друга',
+        nameLatin: 'Druga',
+        streams: [progressive('http://other.example/live')],
+      );
+      final reconnectDirectory = StationDirectory([
+        twoStreams,
+        oneStream,
+        other,
+      ]);
+
+      late FakeStreamResolver resolver;
+      late AudioServiceEngine engine;
+
+      /// Built inside the fakeAsync zone; no jitter, so every backoff is its
+      /// base delay.
+      RadioAudioHandler handlerWith() {
+        resolver = FakeStreamResolver();
+        final handler = RadioAudioHandler(
+          player,
+          session,
+          reconnectDirectory,
+          resolver,
+          _english,
+          reconnectPolicy: ReconnectPolicy(Random(0), jitter: 0),
+        );
+        addTearDown(handler.dispose);
+        engine = AudioServiceEngine(handler);
+        return handler;
+      }
+
+      void ready(FakeAsync async) {
+        player.emitSnapshot(
+          PlayerProcessingState.ready,
+          playing: true,
+          generation: player.lastLoad.generation,
+        );
+        async.flushMicrotasks();
+      }
+
+      /// Starts [station] and lets it reach Playing.
+      RadioAudioHandler playing(FakeAsync async, Station station) {
+        final handler = handlerWith();
+        unawaited(handler.playFromMediaId(_mediaId(station)));
+        async.flushMicrotasks();
+        ready(async);
+        expect(handler.status, isA<Playing>());
+        return handler;
+      }
+
+      /// From now on every load fails right away.
+      void everyLoadFails() => player.onLoad = (_, generation) =>
+          scheduleMicrotask(() => player.emitFailure(generation: generation));
+
+      test('a stall: 8 s of Buffering reloads at the live edge, with a new '
+          'generation, and Playing follows', () {
+        fakeAsync((async) {
+          final handler = playing(async, oneStream);
+          final first = player.lastLoad.generation;
+          final stops = player.stopCalls;
+          player.emitSnapshot(
+            PlayerProcessingState.buffering,
+            playing: true,
+            generation: first,
+          );
+          async.flushMicrotasks();
+          expect(handler.status, isA<Buffering>());
+          async.elapse(const Duration(milliseconds: 7900));
+          expect(player.loads, hasLength(1));
+
+          async.elapse(const Duration(milliseconds: 200));
+          expect(player.loads, hasLength(2));
+          expect(player.lastLoad.uri, only.url);
+          expect(player.lastLoad.generation, greaterThan(first));
+          expect(player.stopCalls, greaterThan(stops));
+          expect(handler.status, isA<Connecting>());
+          expect(handler.playbackState.value.playing, isTrue);
+          // A stall is not a bad URL.
+          expect(resolver.invalidated, isEmpty);
+          ready(async);
+          expect(handler.status, isA<Playing>());
+        });
+      });
+
+      test('Buffering that recovers within 8 s reloads nothing', () {
+        fakeAsync((async) {
+          final handler = playing(async, oneStream);
+          final g = player.lastLoad.generation;
+          player.emitSnapshot(
+            PlayerProcessingState.buffering,
+            playing: true,
+            generation: g,
+          );
+          async.elapse(const Duration(seconds: 7));
+          ready(async);
+          async.elapse(const Duration(minutes: 1));
+          expect(player.loads, hasLength(1));
+          expect(handler.status, isA<Playing>());
+        });
+      });
+
+      test('completed while Playing -> Reconnecting: the notification stays '
+          '(playing true, "Reconnecting…"), then a fresh load', () {
+        fakeAsync((async) {
+          final handler = playing(async, oneStream);
+          final g = player.lastLoad.generation;
+          player.emitSnapshot(
+            PlayerProcessingState.completed,
+            playing: false,
+            generation: g,
+          );
+          async.flushMicrotasks();
+          expect(handler.status, isA<Reconnecting>());
+          final state = handler.playbackState.value;
+          expect(state.playing, isTrue);
+          expect(state.processingState, AudioProcessingState.buffering);
+          expect(handler.mediaItem.value?.displaySubtitle, 'Reconnecting…');
+          expect(resolver.invalidated, [only]);
+          expect(session.releaseCalls, 0);
+
+          async.elapse(Duration.zero);
+          expect(player.loads, hasLength(2));
+          expect(handler.status, isA<Connecting>());
+          expect(handler.playbackState.value.playing, isTrue);
+        });
+      });
+
+      test('the retry starts at the stream that last worked', () {
+        fakeAsync((async) {
+          final handler = handlerWith();
+          unawaited(handler.playFromMediaId(_mediaId(twoStreams)));
+          async.flushMicrotasks();
+          player.emitFailure(generation: player.lastLoad.generation);
+          async.flushMicrotasks();
+          ready(async);
+          expect(
+            handler.status,
+            PlaybackStatus.playing(station: twoStreams, streamIndex: 1),
+          );
+
+          player.emitFailure(generation: player.lastLoad.generation);
+          async.elapse(Duration.zero);
+          expect(player.lastLoad.uri, fallback.url);
+          // It fails too: rotation moves on to the primary at once.
+          player.emitFailure(generation: player.lastLoad.generation);
+          async.flushMicrotasks();
+          expect(player.lastLoad.uri, primary.url);
+          expect(player.loads, hasLength(4));
+        });
+      });
+
+      test('backoff per attempt (0, 1, 2, 4, 8, 15, 30 s), diagnostics show '
+          'the attempt and the delay, and standard gives up after 3 min '
+          'online: Error(streamUnreachable), focus released, no foreground '
+          'service, nothing retried afterwards', () {
+        fakeAsync((async) {
+          final handler = playing(async, oneStream);
+          final dropAt = async.elapsed;
+          final loadTimes = <Duration>[];
+          everyLoadFails();
+          final onLoad = player.onLoad!;
+          player.onLoad = (stream, generation) {
+            loadTimes.add(async.elapsed - dropAt);
+            onLoad(stream, generation);
+          };
+
+          player.emitFailure(generation: player.lastLoad.generation);
+          async.flushMicrotasks();
+          expect(handler.currentDiagnostics.reconnectAttempt, 0);
+          expect(handler.currentDiagnostics.nextRetryDelay, Duration.zero);
+
+          async.elapse(const Duration(seconds: 2));
+          // Retries at 0 and 1 s; the next waits 2 s (attempt 2).
+          expect(handler.status, isA<Reconnecting>());
+          expect(handler.currentDiagnostics.reconnectAttempt, 2);
+          expect(
+            handler.currentDiagnostics.nextRetryDelay,
+            const Duration(seconds: 2),
+          );
+          expect(handler.currentDiagnostics.state, 'Reconnecting(attempt 2)');
+
+          async.elapse(const Duration(minutes: 3) - const Duration(seconds: 2));
+          expect(loadTimes, [
+            for (final s in [0, 1, 3, 7, 15, 30, 60, 90, 120, 150])
+              Duration(seconds: s),
+          ]);
+          expect(
+            handler.status,
+            PlaybackStatus.error(
+              station: oneStream,
+              kind: PlaybackErrorKind.streamUnreachable,
+            ),
+          );
+          final state = handler.playbackState.value;
+          expect(state.playing, isFalse);
+          expect(state.processingState, AudioProcessingState.error);
+          expect(session.releaseCalls, 1);
+          expect(handler.currentDiagnostics.nextRetryDelay, isNull);
+
+          async.elapse(const Duration(minutes: 10));
+          expect(loadTimes, hasLength(10));
+          expect(handler.status, isA<PlaybackError>());
+        });
+      });
+
+      test('30 s of stable Playing resets the backoff and the budget', () {
+        fakeAsync((async) {
+          final handler = playing(async, oneStream);
+          // Outage 1: 2 min 30 s of failing, then the stream comes back.
+          everyLoadFails();
+          player.emitFailure(generation: player.lastLoad.generation);
+          async.elapse(
+            const Duration(seconds: 150) - const Duration(seconds: 1),
+          );
+          player.onLoad = null;
+          async.elapse(const Duration(seconds: 1));
+          expect(handler.status, isA<Connecting>());
+          ready(async);
+          expect(handler.status, isA<Playing>());
+          async.elapse(const Duration(seconds: 31));
+
+          // Outage 2 starts from attempt 0 (an immediate retry) with a full
+          // 3 min budget.
+          everyLoadFails();
+          final before = player.loads.length;
+          player.emitFailure(generation: player.lastLoad.generation);
+          async.elapse(Duration.zero);
+          expect(player.loads.length, before + 1);
+          async.elapse(const Duration(minutes: 2, seconds: 59));
+          expect(handler.status, isNot(isA<PlaybackError>()));
+          async.elapse(const Duration(seconds: 1));
+          expect(handler.status, isA<PlaybackError>());
+        });
+      });
+
+      test('a drop within 30 s of recovering continues the backoff', () {
+        fakeAsync((async) {
+          final handler = playing(async, oneStream);
+          player.emitFailure(generation: player.lastLoad.generation);
+          async.elapse(Duration.zero);
+          ready(async);
+          async.elapse(const Duration(seconds: 10));
+          final before = player.loads.length;
+          player.emitFailure(generation: player.lastLoad.generation);
+          async.flushMicrotasks();
+          expect(
+            handler.status,
+            isA<Reconnecting>().having((r) => r.attempt, 'attempt', 1),
+          );
+          async.elapse(const Duration(milliseconds: 900));
+          expect(player.loads.length, before);
+          async.elapse(const Duration(milliseconds: 200));
+          expect(player.loads.length, before + 1);
+        });
+      });
+
+      test('setRetryBudget(batterySaver) during Playing: the next outage gives '
+          'up after 1 min online', () {
+        fakeAsync((async) {
+          final handler = playing(async, oneStream);
+          unawaited(engine.setRetryBudget(RetryBudgetPreset.batterySaver));
+          async.flushMicrotasks();
+          expect(handler.retryBudget, RetryBudgetPreset.batterySaver);
+          expect(handler.status, isA<Playing>());
+
+          everyLoadFails();
+          player.emitFailure(generation: player.lastLoad.generation);
+          async.elapse(const Duration(seconds: 59));
+          expect(handler.status, isNot(isA<PlaybackError>()));
+          async.elapse(const Duration(seconds: 1));
+          expect(
+            handler.status,
+            PlaybackStatus.error(
+              station: oneStream,
+              kind: PlaybackErrorKind.streamUnreachable,
+            ),
+          );
+          expect(handler.playbackState.value.playing, isFalse);
+        });
+      });
+
+      for (final (label, command, expected) in [
+        (
+          'pause',
+          (RadioAudioHandler h) => h.pause(),
+          PlaybackStatus.paused(station: oneStream),
+        ),
+        (
+          'stop',
+          (RadioAudioHandler h) => h.stop(),
+          const PlaybackStatus.idle(),
+        ),
+      ]) {
+        test('$label during Reconnecting: nothing restarts playback '
+            'afterwards (PLAY-10)', () {
+          fakeAsync((async) {
+            final handler = playing(async, oneStream);
+            everyLoadFails();
+            player.emitFailure(generation: player.lastLoad.generation);
+            async.elapse(const Duration(seconds: 2));
+            expect(handler.status, isA<Reconnecting>());
+            final loads = player.loads.length;
+
+            unawaited(command(handler));
+            async.flushMicrotasks();
+            expect(handler.status, expected);
+            expect(handler.playbackState.value.playing, isFalse);
+            expect(session.releaseCalls, 1);
+
+            async.elapse(const Duration(minutes: 10));
+            expect(player.loads, hasLength(loads));
+            expect(handler.status, expected);
+          });
+        });
+
+        test('$label while a retry is resolving: the result never loads', () {
+          fakeAsync((async) {
+            final handler = playing(async, oneStream);
+            final gate = Completer<void>();
+            resolver.script(only.url, ResolveScript(gate: gate.future));
+            player.emitFailure(generation: player.lastLoad.generation);
+            async.elapse(Duration.zero);
+            expect(handler.status, isA<Connecting>());
+            expect(player.loads, hasLength(1));
+
+            unawaited(command(handler));
+            async.flushMicrotasks();
+            gate.complete();
+            async.elapse(const Duration(minutes: 10));
+            expect(player.loads, hasLength(1));
+            expect(handler.status, expected);
+          });
+        });
+      }
+
+      test('another station during Reconnecting wins: only it loads', () {
+        fakeAsync((async) {
+          final handler = playing(async, oneStream);
+          everyLoadFails();
+          player.emitFailure(generation: player.lastLoad.generation);
+          async.elapse(const Duration(seconds: 2));
+          expect(handler.status, isA<Reconnecting>());
+          player.onLoad = null;
+          final loads = player.loads.length;
+
+          unawaited(handler.playFromMediaId(_mediaId(other)));
+          async.flushMicrotasks();
+          ready(async);
+          expect(
+            handler.status,
+            PlaybackStatus.playing(station: other, streamIndex: 0),
+          );
+          async.elapse(const Duration(minutes: 10));
+          expect(player.loads, hasLength(loads + 1));
+          expect(player.lastLoad.uri, other.streams.single.url);
+          expect(handler.status, isA<Playing>());
+        });
+      });
+    },
+  );
 }
