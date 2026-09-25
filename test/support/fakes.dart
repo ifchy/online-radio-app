@@ -192,6 +192,71 @@ class FakeStreamPlayer implements StreamPlayer {
       );
 }
 
+/// What [FakeStreamResolver] answers for one URL.
+class ResolveScript {
+  const ResolveScript({
+    this.candidates,
+    this.error,
+    this.delay = Duration.zero,
+    this.gate,
+  });
+
+  /// The candidates returned; null means the stream itself as the single
+  /// candidate (hls stays hls, everything else plays as progressive).
+  final List<ResolvedStream>? candidates;
+
+  /// Thrown instead of returning, e.g. a [StreamResolutionException].
+  final Object? error;
+
+  /// Waited before answering (use under fakeAsync).
+  final Duration delay;
+
+  /// Awaited before answering, so a test decides when the result lands.
+  final Future<void>? gate;
+}
+
+/// [StreamResolver] with scripted per-URL results, errors and delays. An
+/// unscripted stream resolves to itself, so progressive and HLS stations need
+/// no script. Never touches the network.
+class FakeStreamResolver implements StreamResolver {
+  final Map<Uri, ResolveScript> scripts = {};
+
+  /// Every stream passed to [resolve], in call order.
+  final List<StationStream> resolveCalls = [];
+
+  /// Every stream passed to [invalidate], in call order.
+  final List<StationStream> invalidated = [];
+
+  /// Runs at the start of every [resolve]; lets a test capture what had been
+  /// published when the resolution began.
+  void Function(StationStream stream)? onResolve;
+
+  void script(Uri url, ResolveScript script) => scripts[url] = script;
+
+  @override
+  Future<List<ResolvedStream>> resolve(StationStream stream) async {
+    onResolve?.call(stream);
+    resolveCalls.add(stream);
+    final script = scripts[stream.url] ?? const ResolveScript();
+    if (script.delay > Duration.zero) await Future<void>.delayed(script.delay);
+    if (script.gate != null) await script.gate;
+    final error = script.error;
+    if (error != null) throw error;
+    return script.candidates ??
+        [
+          ResolvedStream(
+            stream.url,
+            stream.kind == StreamKind.hls
+                ? PlayableKind.hls
+                : PlayableKind.progressive,
+          ),
+        ];
+  }
+
+  @override
+  void invalidate(StationStream stream) => invalidated.add(stream);
+}
+
 /// [AudioSessionPort] that counts focus releases.
 class FakeAudioSessionPort implements AudioSessionPort {
   FakeAudioSessionPort([CallLog? log]) : log = log ?? CallLog();

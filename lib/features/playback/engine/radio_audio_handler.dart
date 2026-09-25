@@ -1,9 +1,11 @@
 import 'dart:async';
 
 import 'package:audio_service/audio_service.dart';
+import 'package:clock/clock.dart';
 
 import '../../catalog/data/station_directory.dart';
 import '../../catalog/domain/station.dart';
+import '../domain/engine_diagnostics.dart';
 import '../domain/engine_strings.dart';
 import '../domain/media_id.dart';
 import '../domain/now_playing.dart';
@@ -12,6 +14,7 @@ import '../domain/playback_status.dart';
 import 'icy/now_playing_parser.dart';
 import 'media_session_mapping.dart';
 import 'ports.dart';
+import 'state_machine.dart';
 
 /// The audio_service handler: the single owner of playback.
 ///
@@ -37,8 +40,11 @@ class RadioAudioHandler extends BaseAudioHandler {
     this._session,
     this._directory,
     this._resolver,
-    this._strings,
-  ) {
+    this._strings, {
+    EngineTimings timings = const EngineTimings(),
+    Clock? clock,
+  }) : _machine = PlaybackStateMachine(timings: timings),
+       _clockOverride = clock {
     _subscriptions.addAll([
       _player.snapshots.listen(_onSnapshot),
       _player.failures.listen(_onFailure),
@@ -51,7 +57,25 @@ class RadioAudioHandler extends BaseAudioHandler {
   final StationDirectory _directory;
   final StreamResolver _resolver;
   final EngineStrings _strings;
+  // ignore: unused_field
+  final PlaybackStateMachine _machine;
+  // ignore: unused_field
+  final Clock? _clockOverride;
   final List<StreamSubscription<Object?>> _subscriptions = [];
+  final _diagnosticsController =
+      StreamController<EngineDiagnostics>.broadcast();
+
+  /// What the engine is doing, for the debug panel (D-07). In memory only.
+  EngineDiagnostics get currentDiagnostics => const EngineDiagnostics.initial();
+  Stream<EngineDiagnostics> get diagnostics => _diagnosticsController.stream;
+
+  /// Cancels timers and subscriptions. The app never disposes the handler;
+  /// tests do.
+  Future<void> dispose() async {
+    for (final s in _subscriptions) {
+      await s.cancel();
+    }
+  }
 
   final _statusController = StreamController<PlaybackStatus>.broadcast();
   final _stationController = StreamController<Station?>.broadcast();

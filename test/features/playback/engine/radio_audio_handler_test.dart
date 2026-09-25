@@ -4,6 +4,7 @@ import 'dart:async';
 
 import 'package:audio_service/audio_service.dart';
 import 'package:clock/clock.dart';
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -12,6 +13,7 @@ import 'package:radio/core/network/media_http_client.dart';
 import 'package:radio/core/text/icy_charset.dart';
 import 'package:radio/features/catalog/data/station_directory.dart';
 import 'package:radio/features/catalog/domain/station.dart';
+import 'package:radio/features/playback/domain/engine_diagnostics.dart';
 import 'package:radio/features/playback/domain/engine_strings.dart';
 import 'package:radio/features/playback/domain/media_id.dart';
 import 'package:radio/features/playback/domain/now_playing.dart';
@@ -101,10 +103,15 @@ void main() {
         const Clock(),
       ),
     );
-    return (
-      RadioAudioHandler(player, session, directory, resolver, _english),
+    final handler = RadioAudioHandler(
+      player,
+      session,
+      directory,
       resolver,
+      _english,
     );
+    addTearDown(handler.dispose);
+    return (handler, resolver);
   }
 
   group('stream resolution', () {
@@ -132,20 +139,22 @@ void main() {
       },
     );
 
-    test('a failed resolve invalidates the stream and ends in '
-        'PlaybackError(streamUnreachable), with nothing loaded', () async {
+    test('a failed resolve invalidates the stream; after two rounds the '
+        'station ends in PlaybackError(allStreamsFailed), with nothing '
+        'loaded', () async {
       final (handler, resolver) = build(
         MockClient((request) async => http.Response('gone', 404)),
       );
       await handler.playFromMediaId(_mediaId(njoy));
       expect(player.loads, isEmpty);
-      expect(resolver.invalidated, [njoy.streams.first]);
+      // One stream, two dead-on-arrival rounds (PLAY-08).
+      expect(resolver.invalidated, [njoy.streams.first, njoy.streams.first]);
       expect(
         handler.status,
         isA<PlaybackError>().having(
           (e) => e.kind,
           'kind',
-          PlaybackErrorKind.streamUnreachable,
+          PlaybackErrorKind.allStreamsFailed,
         ),
       );
       expect(handler.playbackState.value.playing, isFalse);
@@ -161,7 +170,7 @@ void main() {
       );
       await handler.playFromMediaId(_mediaId(njoy));
       expect(player.loads, isEmpty);
-      expect(resolver.invalidated, [njoy.streams.first]);
+      expect(resolver.invalidated, [njoy.streams.first, njoy.streams.first]);
       expect(
         handler.status,
         isA<PlaybackError>().having(
@@ -563,6 +572,377 @@ void main() {
           }
         });
       }
+    });
+  });
+
+  group('fallback rotation (PLAY-08, PLAY-10), under fakeAsync', () {
+    StationStream progressive(String url) =>
+        StationStream(url: Uri.parse(url), kind: StreamKind.progressive);
+
+    final dead = progressive('https://dead-primary.invalid/stream.mp3');
+    final good = progressive('http://good.example/live128');
+    final deadPrimary = Station(
+      id: StationId.debug('dead-primary'),
+      name: 'ТЕСТ: мъртъв основен поток',
+      nameLatin: 'TEST: dead primary',
+      streams: [dead, good],
+    );
+    final allDead = Station(
+      id: StationId.debug('all-dead'),
+      name: 'Мъртва',
+      nameLatin: 'Martva',
+      streams: [
+        progressive('http://a.example/1'),
+        progressive('http://b.example/2'),
+        progressive('http://c.example/3'),
+      ],
+    );
+    final oneStream = Station(
+      id: StationId.debug('one-stream'),
+      name: 'Един поток',
+      nameLatin: 'Edin potok',
+      streams: [progressive('https://only.example/njoy.mp3')],
+    );
+    final playlistStream = StationStream(
+      url: Uri.parse('http://radio.example/slow.m3u'),
+      kind: StreamKind.m3u,
+    );
+    final playlist = Station(
+      id: StationId.debug('playlist'),
+      name: 'Плейлист',
+      nameLatin: 'Playlist',
+      streams: [playlistStream],
+    );
+    final rotationDirectory = StationDirectory([
+      deadPrimary,
+      allDead,
+      oneStream,
+      playlist,
+    ]);
+
+    late FakeStreamResolver resolver;
+
+    /// Builds the handler inside the fakeAsync zone, so its timers are fake.
+    RadioAudioHandler handlerWith() {
+      resolver = FakeStreamResolver();
+      final handler = RadioAudioHandler(
+        player,
+        session,
+        rotationDirectory,
+        resolver,
+        _english,
+      );
+      addTearDown(handler.dispose);
+      return handler;
+    }
+
+    List<Uri> loadedUris() => [for (final l in player.loads) l.uri];
+
+    void ready(FakeAsync async) {
+      player.emitSnapshot(
+        PlayerProcessingState.ready,
+        playing: true,
+        generation: player.lastLoad.generation,
+      );
+      async.flushMicrotasks();
+    }
+
+    test('the media session says playing/loading with "Connecting…" before '
+        'the stream is resolved (Pitfall G)', () {
+      fakeAsync((async) {
+        final handler = handlerWith();
+        final published = <(bool, AudioProcessingState, String?)>[];
+        resolver.onResolve = (_) => published.add((
+          handler.playbackState.value.playing,
+          handler.playbackState.value.processingState,
+          handler.mediaItem.value?.displaySubtitle,
+        ));
+        unawaited(handler.playFromMediaId(_mediaId(deadPrimary)));
+        async.flushMicrotasks();
+        expect(published, [
+          (true, AudioProcessingState.loading, 'Connecting…'),
+        ]);
+      });
+    });
+
+    test('dead primary: stream 1 is loaded at once, with a new generation, '
+        'and Playing follows its ready snapshot', () {
+      fakeAsync((async) {
+        final handler = handlerWith();
+        unawaited(handler.playFromMediaId(_mediaId(deadPrimary)));
+        async.flushMicrotasks();
+        expect(loadedUris(), [dead.url]);
+        final first = player.lastLoad.generation;
+
+        player.emitFailure(generation: first);
+        async.flushMicrotasks();
+        expect(loadedUris(), [dead.url, good.url]);
+        expect(player.lastLoad.generation, greaterThan(first));
+        expect(
+          handler.status,
+          PlaybackStatus.connecting(
+            station: deadPrimary,
+            streamIndex: 1,
+            round: 0,
+          ),
+        );
+        // The foreground service stays up while rotating.
+        expect(handler.playbackState.value.playing, isTrue);
+        expect(resolver.invalidated, [dead]);
+
+        ready(async);
+        expect(
+          handler.status,
+          PlaybackStatus.playing(station: deadPrimary, streamIndex: 1),
+        );
+        async.elapse(const Duration(minutes: 1));
+        expect(player.loads, hasLength(2));
+        expect(handler.status, isA<Playing>());
+      });
+    });
+
+    test('dead primary that fails to resolve: stream 1 is loaded', () {
+      fakeAsync((async) {
+        final handler = handlerWith();
+        resolver.script(
+          dead.url,
+          const ResolveScript(
+            error: StreamResolutionException(StreamResolutionFailure.network),
+          ),
+        );
+        unawaited(handler.playFromMediaId(_mediaId(deadPrimary)));
+        async.flushMicrotasks();
+        expect(loadedUris(), [good.url]);
+        ready(async);
+        expect(
+          handler.status,
+          PlaybackStatus.playing(station: deadPrimary, streamIndex: 1),
+        );
+      });
+    });
+
+    test('slow primary: no audio within 10 s moves to stream 1', () {
+      fakeAsync((async) {
+        final handler = handlerWith();
+        unawaited(handler.playFromMediaId(_mediaId(deadPrimary)));
+        async.flushMicrotasks();
+        async.elapse(const Duration(milliseconds: 9900));
+        expect(loadedUris(), [dead.url]);
+        expect(handler.mediaItem.value?.displaySubtitle, 'Connecting…');
+
+        async.elapse(const Duration(milliseconds: 200));
+        expect(loadedUris(), [dead.url, good.url]);
+        expect(
+          handler.status,
+          PlaybackStatus.connecting(
+            station: deadPrimary,
+            streamIndex: 1,
+            round: 0,
+          ),
+        );
+        expect(handler.playbackState.value.playing, isTrue);
+        ready(async);
+        expect(
+          handler.status,
+          PlaybackStatus.playing(station: deadPrimary, streamIndex: 1),
+        );
+      });
+    });
+
+    test('all streams dead: exactly two rounds, then '
+        'PlaybackError(allStreamsFailed) with focus released and no '
+        'foreground service', () {
+      fakeAsync((async) {
+        final handler = handlerWith();
+        player.onLoad = (_, generation) =>
+            scheduleMicrotask(() => player.emitFailure(generation: generation));
+        unawaited(handler.playFromMediaId(_mediaId(allDead)));
+        async.flushMicrotasks();
+
+        expect(loadedUris(), [
+          for (var round = 0; round < 2; round++)
+            for (final s in allDead.streams) s.url,
+        ]);
+        expect(player.loads.map((l) => l.generation).toSet(), hasLength(6));
+        expect(
+          handler.status,
+          PlaybackStatus.error(
+            station: allDead,
+            kind: PlaybackErrorKind.allStreamsFailed,
+          ),
+        );
+        final state = handler.playbackState.value;
+        expect(state.playing, isFalse);
+        expect(state.processingState, AudioProcessingState.error);
+        expect(session.releaseCalls, 1);
+        expect(handler.mediaItem.value?.displaySubtitle, 'Error');
+
+        // Nothing is retried afterwards.
+        async.elapse(const Duration(minutes: 5));
+        expect(player.loads, hasLength(6));
+      });
+    });
+
+    test('a one-stream station (N-JOY) is loaded twice, then errors', () {
+      fakeAsync((async) {
+        final handler = handlerWith();
+        player.onLoad = (_, generation) =>
+            scheduleMicrotask(() => player.emitFailure(generation: generation));
+        unawaited(handler.playFromMediaId(_mediaId(oneStream)));
+        async.flushMicrotasks();
+        expect(player.loads, hasLength(2));
+        expect(handler.status, isA<PlaybackError>());
+        async.elapse(const Duration(minutes: 5));
+        expect(player.loads, hasLength(2));
+      });
+    });
+
+    test('a late failure, snapshot or connect timer from a superseded load '
+        'changes nothing', () {
+      fakeAsync((async) {
+        final handler = handlerWith();
+        unawaited(handler.playFromMediaId(_mediaId(deadPrimary)));
+        async.flushMicrotasks();
+        final first = player.lastLoad.generation;
+        async.elapse(const Duration(seconds: 1));
+        player.emitFailure(generation: first);
+        async.flushMicrotasks();
+        final second = player.lastLoad.generation;
+        expect(loadedUris(), [dead.url, good.url]);
+
+        player.emitSnapshot(
+          PlayerProcessingState.ready,
+          playing: true,
+          generation: first,
+        );
+        player.emitFailure(generation: first);
+        async.flushMicrotasks();
+        expect(
+          handler.status,
+          PlaybackStatus.connecting(
+            station: deadPrimary,
+            streamIndex: 1,
+            round: 0,
+          ),
+        );
+        expect(player.loads, hasLength(2));
+
+        // The first attempt's timer would have fired at 10 s; the second
+        // attempt has its own, due at 11 s.
+        async.elapse(const Duration(milliseconds: 9500));
+        expect(player.loads, hasLength(2));
+        async.elapse(const Duration(milliseconds: 600));
+        expect(player.loads, hasLength(3));
+        expect(player.lastLoad.uri, dead.url);
+        expect(player.lastLoad.generation, greaterThan(second));
+        expect(
+          handler.status,
+          PlaybackStatus.connecting(
+            station: deadPrimary,
+            streamIndex: 0,
+            round: 1,
+          ),
+        );
+      });
+    });
+
+    for (final (label, command, expected) in [
+      (
+        'pause',
+        (RadioAudioHandler h) => h.pause(),
+        PlaybackStatus.paused(station: playlist),
+      ),
+      ('stop', (RadioAudioHandler h) => h.stop(), const PlaybackStatus.idle()),
+    ]) {
+      test('$label while connecting: a resolve result landing afterwards '
+          'never loads, and the connect timer is gone (PLAY-10)', () {
+        fakeAsync((async) {
+          final handler = handlerWith();
+          final gate = Completer<void>();
+          resolver.script(
+            playlistStream.url,
+            ResolveScript(
+              gate: gate.future,
+              candidates: [
+                ResolvedStream(
+                  Uri.parse('http://cdn.example/late.mp3'),
+                  PlayableKind.progressive,
+                ),
+              ],
+            ),
+          );
+          unawaited(handler.playFromMediaId(_mediaId(playlist)));
+          async.flushMicrotasks();
+          expect(handler.status, isA<Connecting>());
+
+          unawaited(command(handler));
+          async.flushMicrotasks();
+          expect(handler.status, expected);
+          expect(session.releaseCalls, 1);
+          expect(handler.playbackState.value.playing, isFalse);
+
+          gate.complete();
+          async.flushMicrotasks();
+          expect(player.loads, isEmpty);
+          expect(handler.status, expected);
+
+          async.elapse(const Duration(minutes: 1));
+          expect(player.loads, isEmpty);
+          expect(handler.status, expected);
+        });
+      });
+    }
+
+    test('diagnostics: state, the stream in use, time-to-audio and a '
+        '50-entry event log, newest last (D-07)', () {
+      fakeAsync((async) {
+        final handler = handlerWith();
+        final emitted = <EngineDiagnostics>[];
+        final sub = handler.diagnostics.listen(emitted.add);
+        addTearDown(sub.cancel);
+
+        unawaited(handler.playFromMediaId(_mediaId(deadPrimary)));
+        async.flushMicrotasks();
+        async.elapse(const Duration(milliseconds: 1500));
+        player.emitFailure(generation: player.lastLoad.generation);
+        async.flushMicrotasks();
+        async.elapse(const Duration(seconds: 1));
+        ready(async);
+
+        final d = handler.currentDiagnostics;
+        expect(d.state, 'Playing(stream 1)');
+        expect(d.stationId, deadPrimary.id);
+        expect(d.streamIndex, 1);
+        expect(d.candidateIndex, 0);
+        expect(d.url, good.url);
+        expect(d.kind, PlayableKind.progressive);
+        expect(d.round, 0);
+        expect(d.reconnectAttempt, 0);
+        expect(d.nextRetryDelay, isNull);
+        expect(d.lastTimeToAudio, const Duration(milliseconds: 2500));
+        expect(d.recentEvents.first.message, startsWith('UserPlay'));
+        expect(d.recentEvents.last.message, contains('PlayerStateChanged'));
+        expect(d.recentEvents.last.message, endsWith('Playing(stream 1)'));
+        expect(emitted, isNotEmpty);
+        expect(emitted.last.state, 'Playing(stream 1)');
+
+        for (var i = 0; i < 30; i++) {
+          player.emitSnapshot(
+            PlayerProcessingState.buffering,
+            playing: true,
+            generation: player.lastLoad.generation,
+          );
+          ready(async);
+        }
+        final log = handler.currentDiagnostics.recentEvents;
+        expect(log, hasLength(EngineDiagnostics.maxRecentEvents));
+        expect(log.last.message, endsWith('Playing(stream 1)'));
+        expect(log[log.length - 2].message, endsWith('Buffering(stream 1)'));
+        expect(
+          log.map((e) => e.at).toList(),
+          orderedEquals([...log.map((e) => e.at)]..sort()),
+        );
+      });
     });
   });
 }
