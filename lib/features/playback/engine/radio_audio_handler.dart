@@ -58,7 +58,8 @@ class RadioAudioHandler extends BaseAudioHandler {
     Clock? clock,
     RetryBudgetPreset initialRetryBudget = RetryBudgetPreset.standard,
   }) : _machine = PlaybackStateMachine(timings: timings),
-       _clockOverride = clock {
+       _clockOverride = clock,
+       _retryBudget = initialRetryBudget {
     _subscriptions.addAll([
       _player.snapshots.listen(_onSnapshot),
       _player.failures.listen(_onFailure),
@@ -126,10 +127,14 @@ class RadioAudioHandler extends BaseAudioHandler {
   PlayContext playContext = const PlayContext.single();
 
   /// The reconnect give-up policy in force (D-10).
-  RetryBudgetPreset get retryBudget => RetryBudgetPreset.standard;
+  RetryBudgetPreset get retryBudget => _retryBudget;
+  RetryBudgetPreset _retryBudget;
 
-  /// Sets the reconnect give-up policy (D-10).
-  Future<void> setRetryBudget(RetryBudgetPreset preset) async {}
+  /// Sets the reconnect give-up policy (D-10), the engine-level setting
+  /// behind `AudioEngine.setRetryBudget`.
+  Future<void> setRetryBudget(RetryBudgetPreset preset) async {
+    _retryBudget = preset;
+  }
 
   PlaybackStatus get status => _state.status;
   Stream<PlaybackStatus> get statusStream => _statusController.stream;

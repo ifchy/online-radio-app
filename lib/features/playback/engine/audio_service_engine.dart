@@ -72,7 +72,8 @@ class AudioServiceEngine implements AudioEngine {
   Future<void> stop() => _handler.stop();
 
   @override
-  Future<void> setRetryBudget(RetryBudgetPreset preset) async {}
+  Future<void> setRetryBudget(RetryBudgetPreset preset) =>
+      _handler.setRetryBudget(preset);
 
   /// Emits the current value on listen, then every later change.
   static Stream<T> _replayLatest<T>(T Function() latest, Stream<T> changes) =>
