@@ -75,6 +75,13 @@ Future<void> _pumpMiniPlayer(
   await tester.pump();
 }
 
+/// Lets an engine change reach the widgets: the provider receives the event,
+/// then the next frame rebuilds.
+Future<void> _settle(WidgetTester tester) async {
+  await tester.pump();
+  await tester.pump();
+}
+
 /// The texts the mini-player shows, in order.
 List<String?> _miniPlayerTexts(WidgetTester tester) => [
   for (final text in tester.widgetList<Text>(
@@ -257,7 +264,7 @@ void main() {
       engine.setStatus(
         PlaybackStatus.buffering(station: _station, streamIndex: 0),
       );
-      await tester.pump();
+      await _settle(tester);
 
       expect(
         tester.getSemantics(find.text('Буфериране…')),
@@ -361,7 +368,7 @@ void main() {
       engine
         ..setStatus(const PlaybackStatus.idle())
         ..setStation(null);
-      await tester.pump();
+      await _settle(tester);
 
       expect(find.byType(IconButton), findsNothing);
       expect(_miniPlayerTexts(tester), isEmpty);
