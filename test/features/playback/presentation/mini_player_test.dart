@@ -7,6 +7,7 @@ import 'package:radio/features/catalog/application/catalog_providers.dart';
 import 'package:radio/features/catalog/data/station_directory.dart';
 import 'package:radio/features/catalog/domain/station.dart';
 import 'package:radio/features/playback/application/playback_providers.dart';
+import 'package:radio/features/playback/domain/now_playing.dart';
 import 'package:radio/features/playback/domain/play_context.dart';
 import 'package:radio/features/playback/domain/playback_status.dart';
 import 'package:radio/features/playback/presentation/mini_player.dart';
@@ -289,6 +290,126 @@ void main() {
 
       expect(find.bySemanticsLabel('Сега звучи: БГ Радио'), findsOneWidget);
       semantics.dispose();
+    });
+  });
+
+  group('mini-player now playing (ICY)', () {
+    const song = NowPlaying(
+      artist: 'Артист',
+      title: 'Песен',
+      text: 'Артист - Песен',
+    );
+
+    testWidgets('while Playing, the now-playing text shows under the station '
+        'name', (tester) async {
+      final engine = _engineWith(
+        PlaybackStatus.playing(station: _station, streamIndex: 0),
+      )..setNowPlaying(song);
+      await _pumpMiniPlayer(tester, engine);
+
+      expect(_miniPlayerTexts(tester), [_station.name, 'Артист - Песен']);
+    });
+
+    testWidgets('while Playing with no now-playing value, there is no second '
+        'line', (tester) async {
+      final engine = _engineWith(
+        PlaybackStatus.playing(station: _station, streamIndex: 0),
+      )..setNowPlaying(null);
+      await _pumpMiniPlayer(tester, engine);
+
+      expect(_miniPlayerTexts(tester), [_station.name]);
+      expect(find.textContaining('null'), findsNothing);
+    });
+
+    testWidgets('a new song replaces the line, and clearing removes it; the '
+        'line is a live region', (tester) async {
+      final semantics = tester.ensureSemantics();
+      final engine = _engineWith(
+        PlaybackStatus.playing(station: _station, streamIndex: 0),
+      )..setNowPlaying(song);
+      await _pumpMiniPlayer(tester, engine);
+
+      engine.setNowPlaying(
+        const NowPlaying(artist: 'Друг', title: 'Хит', text: 'Друг - Хит'),
+      );
+      await _settle(tester);
+      expect(_miniPlayerTexts(tester), [_station.name, 'Друг - Хит']);
+      expect(
+        tester.getSemantics(find.text('Друг - Хит')),
+        isSemantics(label: 'Друг - Хит', isLiveRegion: true),
+      );
+
+      engine.setNowPlaying(null);
+      await _settle(tester);
+      expect(_miniPlayerTexts(tester), [_station.name]);
+      semantics.dispose();
+    });
+
+    for (final (status, bgLabel, _) in _variants) {
+      if (status is Playing || status is Idle) continue;
+      testWidgets('${status.runtimeType} shows its state label, not the '
+          'now-playing text', (tester) async {
+        final engine = _engineWith(status)..setNowPlaying(song);
+        await _pumpMiniPlayer(tester, engine);
+
+        expect(_miniPlayerTexts(tester), [_station.name, bgLabel]);
+        expect(find.text('Артист - Песен'), findsNothing);
+      });
+    }
+
+    testWidgets('with a now-playing line it meets the tap-target, label and '
+        'contrast guidelines', (tester) async {
+      final semantics = tester.ensureSemantics();
+      final engine = _engineWith(
+        PlaybackStatus.playing(station: _station, streamIndex: 0),
+      )..setNowPlaying(song);
+      await _pumpMiniPlayer(tester, engine);
+
+      expect(find.text('Артист - Песен'), findsOneWidget);
+      await expectLater(tester, meetsGuideline(androidTapTargetGuideline));
+      await expectLater(tester, meetsGuideline(labeledTapTargetGuideline));
+      await expectLater(tester, meetsGuideline(textContrastGuideline));
+      semantics.dispose();
+    });
+
+    testWidgets('a long name and a long title at 2x text scale do not '
+        'overflow', (tester) async {
+      tester.view
+        ..physicalSize = const Size(1080, 1920)
+        ..devicePixelRatio = 3.0;
+      addTearDown(tester.view.reset);
+      final longName = _station.copyWith(
+        name: 'Радио с изключително дълго име за проверка на многоточието',
+      );
+      const longSong = NowPlaying(
+        artist: 'Изпълнител с много дълго име',
+        title: 'Песен с още по-дълго заглавие за проверка',
+        text:
+            'Изпълнител с много дълго име - '
+            'Песен с още по-дълго заглавие за проверка',
+      );
+      final engine =
+          FakeEngine(
+              status: PlaybackStatus.playing(station: longName, streamIndex: 0),
+            )
+            ..setStation(longName)
+            ..setNowPlaying(longSong);
+
+      await _pumpMiniPlayer(
+        tester,
+        engine,
+        textScale: 2.0,
+        home: const HomeScreen(),
+      );
+
+      expect(tester.takeException(), isNull);
+      expect(find.text(longSong.text), findsOneWidget);
+      await tester.tap(find.byTooltip('Пауза'));
+      await tester.tap(find.byTooltip('Спри'));
+      await tester.pump();
+      expect(engine.togglePauseCalls, 1);
+      expect(engine.stopCalls, 1);
+      expect(tester.takeException(), isNull);
     });
   });
 
