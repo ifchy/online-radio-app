@@ -45,6 +45,14 @@ Future<void> bootstrap() async {
     ),
   );
 
+  // audio_service swallows platform errors from setState/setMediaItem into
+  // this stream. Surface them in logcat, or a native failure (for example a
+  // stripped notification icon) silently leaves the app without a foreground
+  // service or notification.
+  AudioService.asyncError.listen(
+    (Object error) => debugPrint('audio_service platform error: $error'),
+  );
+
   final container = ProviderContainer(
     overrides: [
       audioEngineProvider.overrideWithValue(AudioServiceEngine(handler)),
