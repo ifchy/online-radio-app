@@ -6,6 +6,7 @@ import '../../catalog/data/station_directory.dart';
 import '../../catalog/domain/station.dart';
 import '../domain/engine_strings.dart';
 import '../domain/media_id.dart';
+import '../domain/now_playing.dart';
 import '../domain/play_context.dart';
 import '../domain/playback_status.dart';
 import 'media_session_mapping.dart';
@@ -49,9 +50,13 @@ class RadioAudioHandler extends BaseAudioHandler {
 
   final _statusController = StreamController<PlaybackStatus>.broadcast();
   final _stationController = StreamController<Station?>.broadcast();
+  final _nowPlayingController = StreamController<NowPlaying?>.broadcast();
 
   PlaybackStatus _status = const PlaybackStatus.idle();
   Station? _station;
+
+  /// The last now-playing value published, or null.
+  NowPlaying? _nowPlaying;
 
   /// The station most recently started, kept after Stop. Android shows a
   /// resumable media card for the app after Stop (audio_service always
@@ -72,6 +77,9 @@ class RadioAudioHandler extends BaseAudioHandler {
 
   Station? get currentStation => _station;
   Stream<Station?> get currentStationStream => _stationController.stream;
+
+  NowPlaying? get nowPlaying => _nowPlaying;
+  Stream<NowPlaying?> get nowPlayingStream => _nowPlayingController.stream;
 
   bool get _isActive => switch (_status) {
     Connecting() ||

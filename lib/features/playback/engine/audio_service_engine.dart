@@ -3,6 +3,7 @@ import 'dart:async';
 import '../../catalog/domain/station.dart';
 import '../domain/audio_engine.dart';
 import '../domain/media_id.dart';
+import '../domain/now_playing.dart';
 import '../domain/play_context.dart';
 import '../domain/playback_status.dart';
 import 'radio_audio_handler.dart';
@@ -29,6 +30,10 @@ class AudioServiceEngine implements AudioEngine {
     () => _handler.currentStation,
     _handler.currentStationStream,
   );
+
+  @override
+  Stream<NowPlaying?> get nowPlaying =>
+      _replayLatest(() => _handler.nowPlaying, _handler.nowPlayingStream);
 
   @override
   Future<void> play(

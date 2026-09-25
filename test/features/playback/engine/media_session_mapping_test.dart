@@ -10,6 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:radio/features/catalog/domain/station.dart';
 import 'package:radio/features/playback/domain/engine_strings.dart';
 import 'package:radio/features/playback/domain/media_id.dart';
+import 'package:radio/features/playback/domain/now_playing.dart';
 import 'package:radio/features/playback/domain/playback_status.dart';
 import 'package:radio/features/playback/engine/media_session_mapping.dart';
 import 'package:radio/l10n/app_localizations.dart';
@@ -176,5 +177,73 @@ void main() {
       expect(bg.notificationChannelName, 'Възпроизвеждане');
       expect(en.notificationChannelName, 'Playback');
     });
+  });
+
+  group('mediaItemFor with now playing (ICY, PLAY-02)', () {
+    final bg = EngineStrings.fromLocalizations(
+      lookupAppLocalizations(const Locale('bg')),
+    );
+    const song = NowPlaying(
+      artist: 'Артист',
+      title: 'Песен',
+      text: 'Артист - Песен',
+    );
+
+    test('Playing: the title stays the station name, the ICY text is the '
+        'subtitle and the artist is the artist', () {
+      final item = mediaItemFor(
+        _station,
+        rows['Playing']!.status,
+        bg,
+        nowPlaying: song,
+      );
+      expect(item.title, 'БГ Радио');
+      expect(item.displaySubtitle, 'Артист - Песен');
+      expect(item.artist, 'Артист');
+      expect(item.id, StationMediaId(_station.id).format());
+      expect(item.isLive, isTrue);
+    });
+
+    test('Playing with a title-only value: the artist is the whole text', () {
+      final item = mediaItemFor(
+        _station,
+        rows['Playing']!.status,
+        bg,
+        nowPlaying: const NowPlaying(title: 'Новини', text: 'Новини'),
+      );
+      expect(item.title, 'БГ Радио');
+      expect(item.displaySubtitle, 'Новини');
+      expect(item.artist, 'Новини');
+    });
+
+    test('Playing without a value: no subtitle and no artist', () {
+      final item = mediaItemFor(_station, rows['Playing']!.status, bg);
+      expect(item.title, 'БГ Радио');
+      expect(item.displaySubtitle, isNull);
+      expect(item.artist, isNull);
+    });
+
+    final stateTexts = <String, String?>{
+      'Connecting': 'Свързване…',
+      'Buffering': 'Буфериране…',
+      'Reconnecting': 'Повторно свързване…',
+      'Interrupted': 'Прекъснато',
+      'Paused': 'На пауза',
+      'PlaybackError': 'Грешка',
+      'Idle': null,
+    };
+    for (final MapEntry(key: name, value: text) in stateTexts.entries) {
+      test('$name keeps its state text and never shows the ICY text', () {
+        final item = mediaItemFor(
+          _station,
+          rows[name]!.status,
+          bg,
+          nowPlaying: song,
+        );
+        expect(item.title, 'БГ Радио');
+        expect(item.displaySubtitle, text);
+        expect(item.artist, text);
+      });
+    }
   });
 }

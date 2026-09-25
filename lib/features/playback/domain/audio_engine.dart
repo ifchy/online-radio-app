@@ -1,4 +1,5 @@
 import '../../catalog/domain/station.dart';
+import 'now_playing.dart';
 import 'play_context.dart';
 import 'playback_status.dart';
 
@@ -15,6 +16,12 @@ abstract interface class AudioEngine {
   /// The station being played or paused, or null when idle. A new listener
   /// receives the latest value first.
   Stream<Station?> get currentStation;
+
+  /// What the current station says is on air (its parsed ICY title), or null
+  /// when there is nothing to show: no title yet, a junk title, an HLS
+  /// station, or not playing. Cleared on every station start, pause, stop and
+  /// failure. A new listener receives the latest value first.
+  Stream<NowPlaying?> get nowPlaying;
 
   /// Starts [station] at the live edge.
   Future<void> play(

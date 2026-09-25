@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart' show mapEquals;
 import '../../catalog/domain/station.dart';
 import '../domain/engine_strings.dart';
 import '../domain/media_id.dart';
+import '../domain/now_playing.dart';
 import '../domain/playback_status.dart';
 
 /// The FGS table (01-RESEARCH Pattern 2): how each [PlaybackStatus] is shown
@@ -56,8 +57,9 @@ PlaybackState playbackStateFor(PlaybackStatus status) {
 MediaItem mediaItemFor(
   Station station,
   PlaybackStatus status,
-  EngineStrings strings,
-) {
+  EngineStrings strings, {
+  NowPlaying? nowPlaying,
+}) {
   final stateText = _stateText(status, strings);
   return MediaItem(
     id: StationMediaId(station.id).format(),

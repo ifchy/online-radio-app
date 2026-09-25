@@ -9,11 +9,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:radio/core/network/media_http_client.dart';
+import 'package:radio/core/text/icy_charset.dart';
 import 'package:radio/features/catalog/data/station_directory.dart';
 import 'package:radio/features/catalog/domain/station.dart';
 import 'package:radio/features/playback/domain/engine_strings.dart';
 import 'package:radio/features/playback/domain/media_id.dart';
+import 'package:radio/features/playback/domain/now_playing.dart';
 import 'package:radio/features/playback/domain/playback_status.dart';
+import 'package:radio/features/playback/engine/audio_service_engine.dart';
 import 'package:radio/features/playback/engine/ports.dart';
 import 'package:radio/features/playback/engine/radio_audio_handler.dart';
 import 'package:radio/features/playback/engine/resolver/stream_resolver.dart';
@@ -39,11 +42,18 @@ class _RecordingResolver implements StreamResolver {
   }
 }
 
-Station _station(String key, String url, StreamKind kind) => Station(
+Station _station(
+  String key,
+  String url,
+  StreamKind kind, {
+  IcyCharset charset = IcyCharset.auto,
+}) => Station(
   id: StationId.debug(key),
   name: key,
   nameLatin: key,
-  streams: [StationStream(url: Uri.parse(url), kind: kind)],
+  streams: [
+    StationStream(url: Uri.parse(url), kind: kind, icyCharset: charset),
+  ],
 );
 
 String _mediaId(Station station) => StationMediaId(station.id).format();
@@ -68,7 +78,13 @@ void main() {
     'http://play.example/direct128',
     StreamKind.progressive,
   );
-  final directory = StationDirectory([njoy, horizont, direct]);
+  final cyrillic = _station(
+    'cyrillic',
+    'http://play.example/cp1251',
+    StreamKind.progressive,
+    charset: IcyCharset.cp1251,
+  );
+  final directory = StationDirectory([njoy, horizont, direct, cyrillic]);
 
   late FakeStreamPlayer player;
   late FakeAudioSessionPort session;
@@ -297,6 +313,81 @@ void main() {
       final recent = await handler.getChildren(AudioService.recentRootId);
       expect(recent.map((i) => i.title), ['direct']);
       expect(recent.single.displaySubtitle, isNull);
+    });
+  });
+
+  group('now playing (ICY, STRM-05 / PLAY-02)', () {
+    /// A handler whose stations are all progressive, so nothing is fetched.
+    RadioAudioHandler noHttpHandler() => build(
+      MockClient((request) async {
+        fail('Unexpected HTTP request for a progressive stream: $request');
+      }),
+    ).$1;
+
+    /// Starts [station] and reports it ready; returns the load's generation.
+    Future<int> startPlaying(RadioAudioHandler handler, Station station) async {
+      await handler.playFromMediaId(_mediaId(station));
+      final generation = player.lastLoad.generation;
+      player.emitSnapshot(
+        PlayerProcessingState.ready,
+        playing: true,
+        generation: generation,
+      );
+      await pumpEventQueue();
+      expect(handler.status, isA<Playing>());
+      return generation;
+    }
+
+    test('a Cyrillic ICY title shows under the station name on the '
+        'notification, and the engine publishes it', () async {
+      final handler = noHttpHandler();
+      final generation = await startPlaying(handler, direct);
+
+      player.emitIcy('Артист - Песен', generation: generation);
+      await pumpEventQueue();
+
+      final item = handler.mediaItem.value!;
+      expect(item.title, 'direct');
+      expect(item.displaySubtitle, 'Артист - Песен');
+      expect(item.artist, 'Артист');
+      const expected = NowPlaying(
+        artist: 'Артист',
+        title: 'Песен',
+        text: 'Артист - Песен',
+      );
+      expect(handler.nowPlaying, expected);
+      expect(await AudioServiceEngine(handler).nowPlaying.first, expected);
+    });
+
+    test(
+      'mojibake from a windows-1251 stream is published as Cyrillic',
+      () async {
+        final handler = noHttpHandler();
+        final generation = await startPlaying(handler, cyrillic);
+
+        player.emitIcy('Àðòèñò - Ïåñåí', generation: generation);
+        await pumpEventQueue();
+
+        expect(handler.mediaItem.value?.title, 'cyrillic');
+        expect(handler.mediaItem.value?.artist, 'Артист');
+        expect(handler.mediaItem.value?.displaySubtitle, 'Артист - Песен');
+        expect(handler.nowPlaying?.artist, 'Артист');
+      },
+    );
+
+    test('the charset comes from the stream that is playing: cp1251 repairs '
+        'a short mojibake that an auto stream leaves alone', () async {
+      final handler = noHttpHandler();
+      var generation = await startPlaying(handler, cyrillic);
+      player.emitIcy('Rock Àç', generation: generation);
+      await pumpEventQueue();
+      expect(handler.nowPlaying?.text, 'Rock Аз');
+
+      generation = await startPlaying(handler, direct);
+      player.emitIcy('Rock Àç', generation: generation);
+      await pumpEventQueue();
+      expect(handler.nowPlaying?.text, 'Rock Àç');
+      expect(handler.mediaItem.value?.displaySubtitle, 'Rock Àç');
     });
   });
 }

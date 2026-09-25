@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:radio/features/catalog/domain/station.dart';
 import 'package:radio/features/playback/domain/audio_engine.dart';
+import 'package:radio/features/playback/domain/now_playing.dart';
 import 'package:radio/features/playback/domain/play_context.dart';
 import 'package:radio/features/playback/domain/playback_status.dart';
 import 'package:radio/features/playback/engine/ports.dart';
@@ -19,7 +20,7 @@ class PlayCall {
 /// its own state when commanded; tests publish the engine's reaction with
 /// [setStatus] / [setStation].
 ///
-/// Both streams replay the latest value to a new listener, like the real
+/// Every stream replays the latest value to a new listener, like the real
 /// engine.
 class FakeEngine implements AudioEngine {
   FakeEngine({PlaybackStatus status = const PlaybackStatus.idle()})
@@ -28,8 +29,10 @@ class FakeEngine implements AudioEngine {
 
   PlaybackStatus _status;
   Station? _station;
+  NowPlaying? _nowPlaying;
   final _statusChanges = StreamController<PlaybackStatus>.broadcast();
   final _stationChanges = StreamController<Station?>.broadcast();
+  final _nowPlayingChanges = StreamController<NowPlaying?>.broadcast();
 
   final List<PlayCall> playCalls = [];
   int togglePauseCalls = 0;
@@ -46,6 +49,16 @@ class FakeEngine implements AudioEngine {
     _station = station;
     _stationChanges.add(station);
   }
+
+  /// Publishes [nowPlaying] as the current now-playing value.
+  void setNowPlaying(NowPlaying? nowPlaying) {
+    _nowPlaying = nowPlaying;
+    _nowPlayingChanges.add(nowPlaying);
+  }
+
+  @override
+  Stream<NowPlaying?> get nowPlaying =>
+      _replayLatest(() => _nowPlaying, _nowPlayingChanges.stream);
 
   @override
   Stream<PlaybackStatus> get status =>
