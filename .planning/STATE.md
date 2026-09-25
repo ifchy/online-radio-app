@@ -4,16 +4,16 @@ milestone: v1.0
 current_phase: 01
 current_phase_name: Playback Engine & Walking Skeleton
 status: executing
-stopped_at: Completed 01-02-PLAN.md (signed release v0.1.0-rc.3)
-last_updated: "2026-09-25T19:36:59.939Z"
+stopped_at: Completed 01-10-PLAN.md
+last_updated: "2026-09-25T19:54:40.583Z"
 last_activity: 2026-09-25
-last_activity_desc: Phase 01 execution started
-state_head: 8c776dc0a26104c5f12bb549e268445b2a6e209a
+last_activity_desc: Completed 01-10 (reconnect, backoff, retry budget)
+state_head: 420f3bee6ee864458b13b1b845e54acf5a236d67
 progress:
   total_phases: 4
   completed_phases: 0
   total_plans: 13
-  completed_plans: 9
+  completed_plans: 10
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-09-24)
 ## Current Position
 
 Phase: 01 (Playback Engine & Walking Skeleton) — EXECUTING
-Plan: 10 of 13 — 9 complete (01-01 to 01-09); executing wave 6 (01-10, then 01-11), then 01-12, 01-13
-Status: Executing Phase 01
-Last activity: 2026-09-25 — Phase 01 execution started
+Plan: 11 of 13 — 10 complete (01-01 to 01-10); wave 6 continues with 01-11, then 01-12, 01-13
+Status: Ready to execute
+Last activity: 2026-09-25 — Completed 01-10 (reconnect, backoff, retry budget)
 
-Progress: [███████░░░] 69% (9/13 plans in Phase 01)
+Progress: [████████░░] 77% (10/13 plans in Phase 01)
 
 ## Performance Metrics
 
@@ -68,6 +68,7 @@ Progress: [███████░░░] 69% (9/13 plans in Phase 01)
 | Phase 01 P08 | 10 min | 3 tasks | 11 files |
 | Phase 01 P09 | 16 min | 2 tasks | 10 files |
 | Phase 01 P02 | 1 day (owner step) | 2 tasks | 5 files |
+| Phase 01 P10 | 11 min | 2 tasks | 11 files |
 
 ## Accumulated Context
 
@@ -111,6 +112,10 @@ Recent decisions affecting current work:
 - [Phase 01]: [01-09]: The reducer owns the generation counter (01-08's _nextGeneration is gone); the handler resets _readySeenForGeneration on every generation change. Stale events return the same state with no commands; only UserPlay/UserResume leave Paused, Idle and Error (PLAY-10)
 - [Phase 01]: [01-09]: Headset/car next/previous (MediaButton.next/previous -> skipToNext/skipToPrevious) restart PlayContext.neighbour with the same list, wrapping; single or one-station lists do nothing; not in the notification until Phase 3 (D-12). engine.play(startStreamIndex:) goes through the playFromMediaId extras key 'startStreamIndex' (ints only)
 - [Phase 01]: [01-09]: Until 01-10, a failure or completed while Playing/Buffering is Error(streamUnreachable) in the reducer; 01-10 replaces that row (and the everPlayed round-end row) with Reconnecting from lastWorkingStreamIndex and fills EngineDiagnostics.reconnectAttempt/nextRetryDelay
+- [Phase 01]: [01-10]: Drops, completed and 8 s stalls go to Reconnecting (playing true, FGS kept) with backoff 0/1/2/4/8/15/30 s ±20 % from ReconnectPolicy.delayFor; a retry is Connecting from lastWorkingStreamIndex, then rotates; a failed retry round backs off as the next attempt
+- [Phase 01]: [01-10]: RetryBudgetClock lives in EngineState (pure). recovered() stops it while a retry plays; 30 s stable Playing resets budget and attempt. Standard gives up after 3 min failing online with PlaybackError(streamUnreachable) and full release; offline exhaustion maps to PlaybackError(offline) once 01-12 feeds onConnectivity
+- [Phase 01]: [01-10]: The budget timer is the only TimerFired not guarded by generation (it spans an outage's retries); its guard is budget.running + an outage status, and it re-arms if early. UserPlay/UserResume now start with CancelAllTimers
+- [Phase 01]: [01-10]: AudioEngine.setRetryBudget(standard|trip|batterySaver) is the single D-10 setting; it reaches the reducer as SetRetryBudget and re-arms the budget timer mid-outage. The notification alternates 'Повторно свързване…' (waiting) and 'Свързване…' (retry loading)
 
 ### Pending Todos
 
@@ -140,6 +145,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-09-25T19:35:36.081Z
-Stopped at: Completed 01-02-PLAN.md (signed release v0.1.0-rc.3)
+Last session: 2026-09-25T19:54:40.562Z
+Stopped at: Completed 01-10-PLAN.md
 Resume file: None

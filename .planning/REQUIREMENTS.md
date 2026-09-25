@@ -11,17 +11,17 @@ Requirements for initial release (milestone v1.0). Each maps to exactly one road
 
 ### Playback
 
-- [ ] **PLAY-01**: User can keep listening with the screen off or the app in the background (media foreground service), and the service stops when the user stops playback
+- [x] **PLAY-01**: User can keep listening with the screen off or the app in the background (media foreground service), and the service stops when the user stops playback
 - [x] **PLAY-02**: User can control playback (play/pause/stop, station name, now playing) from the media notification and lock screen
 - [ ] **PLAY-03**: User can control playback with wired headset, Bluetooth headset and car Bluetooth buttons
 - [ ] **PLAY-04**: User can skip to the next/previous station from media buttons (headset, steering wheel, notification), cycling through the list playback was started from (favourites by default), with the UI staying in sync
 - [ ] **PLAY-05**: Playback ducks for navigation prompts, pauses for phone calls and other apps, and resumes after a transient interruption — unless the user had paused
 - [ ] **PLAY-06**: Playback pauses when headphones are unplugged or Bluetooth audio disconnects ("becoming noisy")
-- [ ] **PLAY-07**: After a stream drop, stall or Wi-Fi ↔ mobile data switch, playback automatically reconnects at the live edge within ~10 s, with backoff and a bounded retry budget, while the foreground service stays alive
+- [x] **PLAY-07**: After a stream drop, stall or Wi-Fi ↔ mobile data switch, playback automatically reconnects at the live edge within ~10 s, with backoff and a bounded retry budget, while the foreground service stays alive
 - [ ] **PLAY-08**: When a station's primary stream fails, the app automatically tries its fallback streams in priority order
 - [ ] **PLAY-09**: User sees clear connecting / buffering / reconnecting / live states and a friendly error state that distinguishes "no internet" from "station unreachable"
-- [ ] **PLAY-10**: User stops and pauses (including sleep timer and becoming-noisy) are treated as deliberate — reconnect logic never restarts playback the user stopped
-- [ ] **PLAY-11**: Resuming after a pause always rejoins the live stream (never stale buffered audio); no seek bar is shown for live radio
+- [x] **PLAY-10**: User stops and pauses (including sleep timer and becoming-noisy) are treated as deliberate — reconnect logic never restarts playback the user stopped
+- [x] **PLAY-11**: Resuming after a pause always rejoins the live stream (never stale buffered audio); no seek bar is shown for live radio
 
 ### Streams
 
@@ -137,17 +137,17 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| PLAY-01 | Phase 1 | Pending |
+| PLAY-01 | Phase 1 | Complete |
 | PLAY-02 | Phase 1 | Complete |
 | PLAY-03 | Phase 1 | Pending |
 | PLAY-04 | Phase 3 | Pending |
 | PLAY-05 | Phase 1 | Pending |
 | PLAY-06 | Phase 1 | Pending |
-| PLAY-07 | Phase 1 | Pending |
+| PLAY-07 | Phase 1 | Complete |
 | PLAY-08 | Phase 1 | Pending |
 | PLAY-09 | Phase 4 | Pending |
-| PLAY-10 | Phase 1 | Pending |
-| PLAY-11 | Phase 1 | Pending |
+| PLAY-10 | Phase 1 | Complete |
+| PLAY-11 | Phase 1 | Complete |
 | STRM-01 | Phase 1 | Complete |
 | STRM-02 | Phase 1 | Complete |
 | STRM-03 | Phase 1 | Complete |
