@@ -115,6 +115,11 @@ class RadioAudioHandler extends BaseAudioHandler {
   Duration? _lastTimeToAudio;
   EngineDiagnostics _diagnostics = const EngineDiagnostics.initial();
 
+  /// The `playFromMediaId` extras key (an int) for the stream to start at,
+  /// used by `AudioEngine.play(startStreamIndex:)` (01-11's stream
+  /// switcher). Without it the station starts at `streams[0]`.
+  static const startStreamIndexExtra = 'startStreamIndex';
+
   /// The list the next station started through [playFromMediaId] belongs to.
   PlayContext playContext = const PlayContext.single();
 
@@ -152,7 +157,41 @@ class RadioAudioHandler extends BaseAudioHandler {
     if (station == null) {
       throw ArgumentError.value(mediaId, 'mediaId', 'Unknown station');
     }
-    await _dispatch(UserPlay(station, context: playContext));
+    // Extras can come from other apps (a car, a launcher): anything but an
+    // int is ignored, and the state machine starts an out-of-range index at
+    // the primary.
+    final startStreamIndex = extras?[startStreamIndexExtra];
+    await _dispatch(
+      UserPlay(
+        station,
+        context: playContext,
+        startStreamIndex: startStreamIndex is int ? startStreamIndex : 0,
+      ),
+    );
+    await _settle();
+  }
+
+  /// Headset, car and Bluetooth "next" (PLAY-03): the next station of the
+  /// list the current one was started from, wrapping at the end. Not shown
+  /// in the notification until Phase 3 (D-12).
+  @override
+  Future<void> skipToNext() => _skip(1);
+
+  /// Headset, car and Bluetooth "previous" (PLAY-03), wrapping at the start.
+  @override
+  Future<void> skipToPrevious() => _skip(-1);
+
+  /// Starts the station [delta] places away in the current list, keeping
+  /// the list. After Stop it moves from the last station. A single station
+  /// has no neighbour, so nothing happens.
+  Future<void> _skip(int delta) async {
+    final current = _state.station ?? _lastStation;
+    if (current == null) return;
+    final context = _state.context;
+    final id = context.neighbour(current.id, delta);
+    final station = id == null ? null : _directory.byId(id);
+    if (station == null) return;
+    await _dispatch(UserPlay(station, context: context));
     await _settle();
   }
 

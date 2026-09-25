@@ -47,7 +47,9 @@ class AudioServiceEngine implements AudioEngine {
     int startStreamIndex = 0,
   }) async {
     _handler.playContext = context;
-    await _handler.playFromMediaId(StationMediaId(station.id).format());
+    await _handler.playFromMediaId(StationMediaId(station.id).format(), {
+      RadioAudioHandler.startStreamIndexExtra: startStreamIndex,
+    });
   }
 
   @override
