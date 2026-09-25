@@ -3,6 +3,7 @@ import 'engine_diagnostics.dart';
 import 'now_playing.dart';
 import 'play_context.dart';
 import 'playback_status.dart';
+import 'retry_budget.dart';
 
 /// The playback facade the app talks to. The implementation behind it
 /// (audio_service + just_audio today) can be swapped without touching the UI.
@@ -50,4 +51,11 @@ abstract interface class AudioEngine {
   /// Starts the previous station of that list, wrapping at the start. Does
   /// nothing for a single station.
   Future<void> skipToPrevious();
+
+  /// How long the engine keeps reconnecting after a drop before it gives up
+  /// (D-10). The single engine-level setting behind a future "trip mode" /
+  /// "battery saver" toggle; Phase 1 always uses
+  /// [RetryBudgetPreset.standard]. A change applies to the outage in
+  /// progress too.
+  Future<void> setRetryBudget(RetryBudgetPreset preset);
 }

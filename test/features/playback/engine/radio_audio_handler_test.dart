@@ -19,6 +19,7 @@ import 'package:radio/features/playback/domain/media_id.dart';
 import 'package:radio/features/playback/domain/now_playing.dart';
 import 'package:radio/features/playback/domain/play_context.dart';
 import 'package:radio/features/playback/domain/playback_status.dart';
+import 'package:radio/features/playback/domain/retry_budget.dart';
 import 'package:radio/features/playback/engine/audio_service_engine.dart';
 import 'package:radio/features/playback/engine/ports.dart';
 import 'package:radio/features/playback/engine/radio_audio_handler.dart';
@@ -1089,6 +1090,55 @@ void main() {
       final latest = await engine.diagnostics.first;
       expect(latest.stationId, c.id);
       expect(latest.streamIndex, 1);
+    });
+  });
+
+  group('the retry budget setting (D-10)', () {
+    RadioAudioHandler handlerWith({RetryBudgetPreset? initial}) {
+      final handler = initial == null
+          ? RadioAudioHandler(
+              player,
+              session,
+              directory,
+              FakeStreamResolver(),
+              _english,
+            )
+          : RadioAudioHandler(
+              player,
+              session,
+              directory,
+              FakeStreamResolver(),
+              _english,
+              initialRetryBudget: initial,
+            );
+      addTearDown(handler.dispose);
+      return handler;
+    }
+
+    test('the handler starts with the standard preset', () {
+      expect(handlerWith().retryBudget, RetryBudgetPreset.standard);
+    });
+
+    test('initialRetryBudget seeds the preset', () {
+      expect(
+        handlerWith(initial: RetryBudgetPreset.trip).retryBudget,
+        RetryBudgetPreset.trip,
+      );
+    });
+
+    test('engine.setRetryBudget reaches the handler', () async {
+      final handler = handlerWith();
+      final engine = AudioServiceEngine(handler);
+      await engine.setRetryBudget(RetryBudgetPreset.batterySaver);
+      expect(handler.retryBudget, RetryBudgetPreset.batterySaver);
+      await engine.setRetryBudget(RetryBudgetPreset.trip);
+      expect(handler.retryBudget, RetryBudgetPreset.trip);
+    });
+
+    test('FakeEngine records setRetryBudget', () async {
+      final fake = FakeEngine();
+      await fake.setRetryBudget(RetryBudgetPreset.batterySaver);
+      expect(fake.retryBudgetCalls, [RetryBudgetPreset.batterySaver]);
     });
   });
 }

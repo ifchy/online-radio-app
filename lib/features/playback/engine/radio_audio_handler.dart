@@ -12,6 +12,7 @@ import '../domain/media_id.dart';
 import '../domain/now_playing.dart';
 import '../domain/play_context.dart';
 import '../domain/playback_status.dart';
+import '../domain/retry_budget.dart';
 import 'icy/now_playing_parser.dart';
 import 'media_session_mapping.dart';
 import 'ports.dart';
@@ -55,6 +56,7 @@ class RadioAudioHandler extends BaseAudioHandler {
     this._strings, {
     EngineTimings timings = const EngineTimings(),
     Clock? clock,
+    RetryBudgetPreset initialRetryBudget = RetryBudgetPreset.standard,
   }) : _machine = PlaybackStateMachine(timings: timings),
        _clockOverride = clock {
     _subscriptions.addAll([
@@ -122,6 +124,12 @@ class RadioAudioHandler extends BaseAudioHandler {
 
   /// The list the next station started through [playFromMediaId] belongs to.
   PlayContext playContext = const PlayContext.single();
+
+  /// The reconnect give-up policy in force (D-10).
+  RetryBudgetPreset get retryBudget => RetryBudgetPreset.standard;
+
+  /// Sets the reconnect give-up policy (D-10).
+  Future<void> setRetryBudget(RetryBudgetPreset preset) async {}
 
   PlaybackStatus get status => _state.status;
   Stream<PlaybackStatus> get statusStream => _statusController.stream;

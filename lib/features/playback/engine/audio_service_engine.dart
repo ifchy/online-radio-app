@@ -7,6 +7,7 @@ import '../domain/media_id.dart';
 import '../domain/now_playing.dart';
 import '../domain/play_context.dart';
 import '../domain/playback_status.dart';
+import '../domain/retry_budget.dart';
 import 'radio_audio_handler.dart';
 
 /// [AudioEngine] backed by the audio_service [RadioAudioHandler].
@@ -69,6 +70,9 @@ class AudioServiceEngine implements AudioEngine {
 
   @override
   Future<void> stop() => _handler.stop();
+
+  @override
+  Future<void> setRetryBudget(RetryBudgetPreset preset) async {}
 
   /// Emits the current value on listen, then every later change.
   static Stream<T> _replayLatest<T>(T Function() latest, Stream<T> changes) =>

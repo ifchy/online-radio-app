@@ -6,6 +6,7 @@ import 'package:radio/features/playback/domain/engine_diagnostics.dart';
 import 'package:radio/features/playback/domain/now_playing.dart';
 import 'package:radio/features/playback/domain/play_context.dart';
 import 'package:radio/features/playback/domain/playback_status.dart';
+import 'package:radio/features/playback/domain/retry_budget.dart';
 import 'package:radio/features/playback/engine/ports.dart';
 
 /// A recorded [FakeEngine.play] call.
@@ -43,6 +44,9 @@ class FakeEngine implements AudioEngine {
   int stopCalls = 0;
   int skipToNextCalls = 0;
   int skipToPreviousCalls = 0;
+
+  /// Every [setRetryBudget] call, in order.
+  final List<RetryBudgetPreset> retryBudgetCalls = [];
 
   /// Publishes [diagnostics] as the engine's diagnostics.
   void setDiagnostics(EngineDiagnostics diagnostics) {
@@ -107,6 +111,10 @@ class FakeEngine implements AudioEngine {
 
   @override
   Future<void> stop() async => stopCalls++;
+
+  @override
+  Future<void> setRetryBudget(RetryBudgetPreset preset) async =>
+      retryBudgetCalls.add(preset);
 
   static Stream<T> _replayLatest<T>(T Function() latest, Stream<T> changes) =>
       Stream<T>.multi((controller) {
