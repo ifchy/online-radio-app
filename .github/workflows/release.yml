@@ -111,7 +111,10 @@ jobs:
 
           apk_certs="$("$apksigner" verify --print-certs "$APK")"
           printf '%s\n' "$apk_certs"
-          if ! grep -q '^Signer #1 certificate DN: ' <<<"$apk_certs"; then
+          # apksigner labels the first signer "Signer #1 certificate ..." in older
+          # build-tools and "V2 Signer: certificate ..." (V3, V3.1, ...) in newer ones.
+          signer_re='^(Signer #1|V[0-9.]+ Signer:) certificate'
+          if ! grep -qE "$signer_re DN: " <<<"$apk_certs"; then
             echo "::error::The release APK has no signer certificate."
             exit 1
           fi
@@ -131,8 +134,8 @@ jobs:
             exit 1
           fi
 
-          apk_sha="$( { grep -m 1 '^Signer #1 certificate SHA-256 digest: ' <<<"$apk_certs" || true; } \
-            | sed 's/^Signer #1 certificate SHA-256 digest: //' | tr -d ' :' | tr 'A-F' 'a-f')"
+          apk_sha="$( { grep -m 1 -E "$signer_re SHA-256 digest: " <<<"$apk_certs" || true; } \
+            | sed -E 's/^.* certificate SHA-256 digest: //' | tr -d ' :' | tr 'A-F' 'a-f')"
           aab_sha="$( { grep -m 1 -E '^[[:space:]]*SHA256: ' <<<"$aab_certs" || true; } \
             | sed -E 's/^[[:space:]]*SHA256: //' | tr -d ' :' | tr 'A-F' 'a-f')"
           if [ -z "$apk_sha" ] || [ "$apk_sha" != "$aab_sha" ]; then
