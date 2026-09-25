@@ -8,6 +8,7 @@ const _phase1Ids = [
   'curated:radio1',
   'curated:bg-radio',
   'curated:energy',
+  'curated:njoy',
   'debug:dead-primary',
   'debug:slow-primary',
   'debug:horizont-hls-sniff',

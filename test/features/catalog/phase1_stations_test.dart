@@ -7,8 +7,9 @@ import 'package:radio/features/catalog/data/station_directory.dart';
 import 'package:radio/features/catalog/domain/station.dart';
 
 /// The owner's D-02 table (01-05 Task 1): every stream the owner played in
-/// VLC on 2026-09-25 and marked VERIFIED, in priority order. N-JOY and
-/// Радио Витоша are excluded; see the owner-decision tests below.
+/// VLC on 2026-09-25 and marked VERIFIED, in priority order. N-JOY is back
+/// with the stream the owner verified later that day on bTV's own CDN.
+/// Радио Витоша is excluded; see the owner-decision tests below.
 const _ownerTable = <String, List<String>>{
   'curated:bnr-horizont': [
     'https://lb-hls.cdn.bg/2032/fls/Horizont.stream/playlist.m3u8',
@@ -29,6 +30,7 @@ const _ownerTable = <String, List<String>>{
     'http://play.global.audio/nrj128',
     'http://play.global.audio/nrj64?dist=WEBSITEBG',
   ],
+  'curated:njoy': ['https://cdn.btv.bg/radio/njoy.mp3'],
 };
 
 const _debugIds = [
@@ -60,12 +62,13 @@ void main() {
   group('release list (includeDebug: false)', () {
     final release = StationDirectory.phase1(includeDebug: false);
 
-    test('is the four owner-verified stations, national flagship first', () {
+    test('is the five owner-verified stations, national flagship first', () {
       expect(release.all.map((s) => s.id.value), [
         'curated:bnr-horizont',
         'curated:radio1',
         'curated:bg-radio',
         'curated:energy',
+        'curated:njoy',
       ]);
       expect(release.all, phase1Stations);
     });
@@ -102,6 +105,7 @@ void main() {
         'curated:radio1': ('Радио 1', 'Radio 1'),
         'curated:bg-radio': ('БГ Радио', 'BG Radio'),
         'curated:energy': ('Радио Енерджи', 'Radio Energy'),
+        'curated:njoy': ('N-JOY', 'N-JOY'),
       });
     });
 
@@ -110,6 +114,13 @@ void main() {
       expect(primary.url, Uri.parse('http://play.global.audio/bgradio128'));
       expect(primary.kind, StreamKind.progressive);
       expect(primary.codec, 'mp3');
+    });
+
+    test('N-JOY plays its verified https MP3 on bTV\'s own CDN', () {
+      final stream = _byKey(release, 'curated:njoy').streams.single;
+      expect(stream.url.host, 'cdn.btv.bg');
+      expect(stream.kind, StreamKind.progressive);
+      expect(stream.codec, 'mp3');
     });
 
     test('Хоризонт plays over HLS only', () {
@@ -128,7 +139,7 @@ void main() {
     });
 
     test(
-      'has no .pls/.m3u wrapper: N-JOY was excluded by the owner on '
+      'has no .pls/.m3u wrapper: N-JOY\'s .m3u was rejected by the owner on '
       '2026-09-25, so D-03 wrapper coverage is the 01-04 resolver tests only',
       () {
         final kinds = _allStreams(release.all).map((s) => s.kind);
@@ -146,9 +157,8 @@ void main() {
     });
 
     test('ships no excluded station and no owner-rejected source '
-        '(N-JOY, Радио Витоша, stream.bnr.bg:8011)', () {
+        '(Радио Витоша, live.btvradio.bg, stream.bnr.bg:8011)', () {
       final ids = release.all.map((s) => s.id.value);
-      expect(ids, isNot(contains('curated:njoy')));
       expect(ids, isNot(contains('curated:vitosha')));
       final hosts = _allStreams(release.all).map((s) => s.url.host);
       expect(hosts, isNot(contains('stream.bnr.bg')));
