@@ -113,6 +113,8 @@ key.properties
 **/android/key.properties
 *.jks
 *.keystore
+# base64-encoded keystore made for the GitHub secret (docs/RELEASE-SIGNING.md)
+*.b64
 # Google Play publishing / service-account credentials
 *service-account*.json
 *play-store*credentials*.json

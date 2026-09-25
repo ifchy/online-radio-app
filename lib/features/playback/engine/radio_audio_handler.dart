@@ -1,14 +1,21 @@
 import 'dart:async';
+import 'dart:collection';
 
 import 'package:audio_service/audio_service.dart';
+import 'package:clock/clock.dart';
 
 import '../../catalog/data/station_directory.dart';
 import '../../catalog/domain/station.dart';
+import '../domain/engine_diagnostics.dart';
+import '../domain/engine_strings.dart';
 import '../domain/media_id.dart';
+import '../domain/now_playing.dart';
 import '../domain/play_context.dart';
 import '../domain/playback_status.dart';
+import 'icy/now_playing_parser.dart';
 import 'media_session_mapping.dart';
 import 'ports.dart';
+import 'state_machine.dart';
 
 /// The audio_service handler: the single owner of playback.
 ///
@@ -16,52 +23,121 @@ import 'ports.dart';
 /// Bluetooth buttons all arrive here through the same methods
 /// (`playFromMediaId`, `play`, `pause`, `stop`, `click`).
 ///
-/// Live-radio rules:
+/// The handler decides nothing itself. Every input (user commands, player
+/// snapshots and failures, resolve results, timer fires) becomes an
+/// [EngineEvent] on one serial queue. Each event is reduced by the pure
+/// [PlaybackStateMachine]; the new state is published to the media session
+/// and the app, and only then are the returned [EngineCommand]s executed, in
+/// order, before the next event is reduced.
+///
+/// Live-radio rules (enforced by the state machine):
 /// - Pause stops the network transport; play after a pause is a fresh load
 ///   at the live edge (PLAY-11). There is no seek.
-/// - The media session is told about a start *before* the stream loads, so
-///   the foreground service starts from the user action (Pitfall G).
-/// - Every load gets a new generation; events from older loads are dropped.
+/// - The media session is told about a start *before* the stream resolves
+///   or loads, so the foreground service starts from the user action
+///   (Pitfall G).
+/// - Every load gets a new generation; events from older loads are dropped
+///   (PLAY-10).
+/// - A dead or slow stream falls over to the next candidate and stream; a
+///   station that never plays is given up after two rounds (PLAY-08).
 /// - Focus is released on pause, stop and error (Pitfall F).
+/// - Now-playing (ICY) is cleared on every start, pause, stop and error, and
+///   only titles from the current load after it is ready are shown
+///   (Pitfall E).
 ///
-/// Reconnect, fallback rotation and interruptions arrive in later plans.
+/// Reconnect after a drop and interruptions arrive in later plans.
 class RadioAudioHandler extends BaseAudioHandler {
-  RadioAudioHandler(this._player, this._session, this._directory) {
+  RadioAudioHandler(
+    this._player,
+    this._session,
+    this._directory,
+    this._resolver,
+    this._strings, {
+    EngineTimings timings = const EngineTimings(),
+    Clock? clock,
+  }) : _machine = PlaybackStateMachine(timings: timings),
+       _clockOverride = clock {
     _subscriptions.addAll([
       _player.snapshots.listen(_onSnapshot),
       _player.failures.listen(_onFailure),
+      _player.icyTitles.listen(_onIcyTitle),
     ]);
   }
 
   final StreamPlayer _player;
   final AudioSessionPort _session;
   final StationDirectory _directory;
+  final StreamResolver _resolver;
+  final EngineStrings _strings;
+  final PlaybackStateMachine _machine;
+
+  /// Null: the zone's clock (fake under fakeAsync).
+  final Clock? _clockOverride;
   final List<StreamSubscription<Object?>> _subscriptions = [];
 
   final _statusController = StreamController<PlaybackStatus>.broadcast();
   final _stationController = StreamController<Station?>.broadcast();
+  final _nowPlayingController = StreamController<NowPlaying?>.broadcast();
+  final _diagnosticsController =
+      StreamController<EngineDiagnostics>.broadcast();
 
-  PlaybackStatus _status = const PlaybackStatus.idle();
+  EngineState _state = const EngineState.initial();
   Station? _station;
-  int _generation = 0;
 
-  /// The list the current station was started from.
+  /// Events waiting to be reduced, each with the completer its caller awaits.
+  final _queue = ListQueue<(EngineEvent, Completer<void>)>();
+
+  /// Completes when the queue runs empty; null while the queue is idle.
+  Completer<void>? _draining;
+
+  /// The latest Resolve command, so user commands can wait for it.
+  _InFlightResolve? _inFlightResolve;
+
+  final Map<TimerKind, Timer> _timers = {};
+  bool _disposed = false;
+
+  /// The last now-playing value published, or null.
+  NowPlaying? _nowPlaying;
+
+  /// The station most recently started, kept after Stop. Android shows a
+  /// resumable media card for the app after Stop (audio_service always
+  /// answers the system UI's "recent" browse query), and its Play button, a
+  /// Bluetooth PLAY or a car must start this station again.
+  Station? _lastStation;
+
+  /// Whether the current generation's load has reported ready. ICY titles
+  /// that arrive earlier are dropped: the native player's ICY state survives
+  /// a load, so an early title can be the previous source's (Pitfall E).
+  /// Reset whenever the state machine moves to a new generation.
+  bool _readySeenForGeneration = false;
+
+  final _recentEvents = ListQueue<DiagnosticEvent>();
+  Duration? _lastTimeToAudio;
+  EngineDiagnostics _diagnostics = const EngineDiagnostics.initial();
+
+  /// The `playFromMediaId` extras key (an int) for the stream to start at,
+  /// used by `AudioEngine.play(startStreamIndex:)` (01-11's stream
+  /// switcher). Without it the station starts at `streams[0]`.
+  static const startStreamIndexExtra = 'startStreamIndex';
+
+  /// The list the next station started through [playFromMediaId] belongs to.
   PlayContext playContext = const PlayContext.single();
 
-  PlaybackStatus get status => _status;
+  PlaybackStatus get status => _state.status;
   Stream<PlaybackStatus> get statusStream => _statusController.stream;
 
   Station? get currentStation => _station;
   Stream<Station?> get currentStationStream => _stationController.stream;
 
-  bool get _isActive => switch (_status) {
-    Connecting() ||
-    Playing() ||
-    Buffering() ||
-    Reconnecting() ||
-    Interrupted() => true,
-    Idle() || Paused() || PlaybackError() => false,
-  };
+  NowPlaying? get nowPlaying => _nowPlaying;
+  Stream<NowPlaying?> get nowPlayingStream => _nowPlayingController.stream;
+
+  /// What the engine is doing, for the debug panel (D-07). In memory only:
+  /// never persisted or transmitted (T-09-03).
+  EngineDiagnostics get currentDiagnostics => _diagnostics;
+  Stream<EngineDiagnostics> get diagnostics => _diagnosticsController.stream;
+
+  DateTime get _now => (_clockOverride ?? clock).now();
 
   @override
   Future<void> playFromMediaId(
@@ -81,128 +157,332 @@ class RadioAudioHandler extends BaseAudioHandler {
     if (station == null) {
       throw ArgumentError.value(mediaId, 'mediaId', 'Unknown station');
     }
-    await _start(station);
+    // Extras can come from other apps (a car, a launcher): anything but an
+    // int is ignored, and the state machine starts an out-of-range index at
+    // the primary.
+    final startStreamIndex = extras?[startStreamIndexExtra];
+    await _dispatch(
+      UserPlay(
+        station,
+        context: playContext,
+        startStreamIndex: startStreamIndex is int ? startStreamIndex : 0,
+      ),
+    );
+    await _settle();
+  }
+
+  /// Headset, car and Bluetooth "next" (PLAY-03): the next station of the
+  /// list the current one was started from, wrapping at the end. Not shown
+  /// in the notification until Phase 3 (D-12).
+  @override
+  Future<void> skipToNext() => _skip(1);
+
+  /// Headset, car and Bluetooth "previous" (PLAY-03), wrapping at the start.
+  @override
+  Future<void> skipToPrevious() => _skip(-1);
+
+  /// Starts the station [delta] places away in the current list, keeping
+  /// the list. After Stop it moves from the last station. A single station
+  /// has no neighbour, so nothing happens.
+  Future<void> _skip(int delta) async {
+    final current = _state.station ?? _lastStation;
+    if (current == null) return;
+    final context = _state.context;
+    final id = context.neighbour(current.id, delta);
+    final station = id == null ? null : _directory.byId(id);
+    if (station == null) return;
+    await _dispatch(UserPlay(station, context: context));
+    await _settle();
   }
 
   @override
   Future<void> play() async {
-    final station = _station;
-    if (station == null) return;
-    switch (_status) {
-      case Paused() || PlaybackError():
-        await _start(station);
-      case _:
-        // Idle has nothing to resume; active states are already playing.
-        break;
+    final last = _lastStation;
+    if (_state.status is Idle) {
+      // After Stop: the media card's Play (or a headset/Bluetooth PLAY)
+      // starts the last station again, live.
+      if (last == null) return;
+      await _dispatch(UserPlay(last, context: _state.context));
+    } else {
+      // Paused or Error: a fresh load. Active states ignore it.
+      await _dispatch(const UserResume());
     }
+    await _settle();
+  }
+
+  /// Answers the system UI's media-resumption query ([AudioService.recentRootId])
+  /// with the last station, so the card after Stop is playable. The full
+  /// browse tree (Android Auto) arrives in v1.1.
+  @override
+  Future<List<MediaItem>> getChildren(
+    String parentMediaId, [
+    Map<String, dynamic>? options,
+  ]) async {
+    final last = _lastStation;
+    if (parentMediaId == AudioService.recentRootId && last != null) {
+      return [mediaItemFor(last, const PlaybackStatus.idle(), _strings)];
+    }
+    return const [];
   }
 
   @override
   Future<void> pause() async {
-    final station = _station;
-    if (!_isActive || station == null) return;
-    _generation++;
-    _setStatus(PlaybackStatus.paused(station: station));
-    await _player.stop();
-    await _session.release();
+    await _dispatch(const UserPause());
+    await _settle();
   }
 
+  /// processingState idle: audio_service stops the service and removes the
+  /// notification.
   @override
   Future<void> stop() async {
-    _generation++;
-    await _player.stop();
-    await _session.release();
-    _setStation(null);
-    mediaItem.add(null);
-    // processingState idle: audio_service stops the service and removes the
-    // notification.
-    _setStatus(const PlaybackStatus.idle());
+    await _dispatch(const UserStop());
+    await _settle();
   }
 
-  Future<void> _start(Station station) async {
-    final generation = ++_generation;
-    await _player.stop();
-    if (generation != _generation) return;
+  /// Cancels timers and subscriptions. The app never disposes the handler;
+  /// tests do.
+  Future<void> dispose() async {
+    _disposed = true;
+    _cancelTimers();
+    for (final s in _subscriptions) {
+      await s.cancel();
+    }
+  }
 
-    // Publish before loading, so the FGS starts from the user action.
-    _setStation(station);
-    mediaItem.add(mediaItemFor(station));
-    _setStatus(
-      PlaybackStatus.connecting(station: station, streamIndex: 0, round: 0),
-    );
+  // -------------------------------------------------------------------------
+  // The serial event queue
+  // -------------------------------------------------------------------------
 
-    final resolved = _resolvedFor(station.streams.first);
-    if (resolved == null) {
-      // .pls / .m3u / unknown need the resolver (plan 01-04).
-      await _fail(station, PlaybackErrorKind.unsupportedFormat);
+  /// Queues [event]; the future completes once its commands have run. When
+  /// the queue is idle the event is reduced and published synchronously.
+  ///
+  /// Code running inside a command must not await this (it would wait for
+  /// itself); it uses `unawaited`.
+  Future<void> _dispatch(EngineEvent event) {
+    final done = Completer<void>();
+    if (_disposed) {
+      done.complete();
+      return done.future;
+    }
+    _queue.add((event, done));
+    if (_draining == null) unawaited(_drain());
+    return done.future;
+  }
+
+  Future<void> _drain() async {
+    final draining = _draining = Completer<void>();
+    try {
+      while (_queue.isNotEmpty) {
+        final (event, done) = _queue.removeFirst();
+        try {
+          final transition = _machine.transition(_state, event, _now);
+          _apply(event, transition.next);
+          for (final command in transition.commands) {
+            await _execute(command);
+          }
+        } catch (error, stack) {
+          // A reducer or executor bug must never stop the queue: playback
+          // would be dead until the app restarts. Report it and go on.
+          _log('internal error on $event: $error');
+          Zone.current.handleUncaughtError(error, stack);
+        } finally {
+          done.complete();
+        }
+      }
+    } finally {
+      _draining = null;
+      draining.complete();
+    }
+  }
+
+  /// Waits until the queue is idle and the current generation's resolution
+  /// (if any) has been handled, so `await handler.play()` returns once the
+  /// stream is loaded or has failed over. A resolution of a superseded
+  /// generation is not waited for.
+  Future<void> _settle() async {
+    while (true) {
+      final inFlight = _inFlightResolve;
+      if (inFlight != null &&
+          !inFlight.done.isCompleted &&
+          inFlight.generation == _state.generation) {
+        await inFlight.done.future;
+        continue;
+      }
+      final draining = _draining;
+      if (draining != null) {
+        await draining.future;
+        continue;
+      }
       return;
     }
+  }
+
+  /// Adopts [next] and publishes it: station, then media item, then
+  /// PlaybackState, before any command runs (Pitfall G).
+  void _apply(EngineEvent event, EngineState next) {
+    final previous = _state;
+    _state = next;
+    if (next.generation != previous.generation) {
+      // A new generation supersedes the current load: its ICY titles are
+      // dropped until the new load reports ready.
+      _readySeenForGeneration = false;
+    }
+    final station = next.station;
+    if (station != null) _lastStation = station;
+    _setStation(station);
+    if (next.status != previous.status) _publishStatus(next.status);
+    _log('$event → ${describeStatus(next.status)}');
+  }
+
+  Future<void> _execute(EngineCommand command) async {
     try {
-      await _player.load(resolved, generation: generation);
-    } catch (_) {
-      if (generation == _generation) {
-        await _fail(station, PlaybackErrorKind.streamUnreachable);
+      switch (command) {
+        case StopTransport():
+          await _player.stop();
+        case Resolve(:final stream, :final generation):
+          _startResolve(stream, generation);
+        case Load(:final resolved, :final generation):
+          try {
+            await _player.load(resolved, generation: generation);
+          } catch (_) {
+            unawaited(_dispatch(PlayerFailed(generation, -1)));
+          }
+        case ReleaseFocus():
+          await _session.release();
+        case StartTimer(:final kind, :final duration, :final generation):
+          _timers.remove(kind)?.cancel();
+          _timers[kind] = Timer(
+            duration,
+            () => unawaited(_dispatch(TimerFired(kind, generation))),
+          );
+        case CancelTimer(:final kind):
+          _timers.remove(kind)?.cancel();
+        case CancelAllTimers():
+          _cancelTimers();
+        case InvalidateResolution(:final stream):
+          _resolver.invalidate(stream);
+        case ClearNowPlaying():
+          _setNowPlaying(null);
+        case RecordTimeToAudio(:final duration):
+          _lastTimeToAudio = duration;
+          _emitDiagnostics();
       }
+    } catch (error) {
+      // A platform call (stop, focus release) failing must not stop the
+      // commands after it.
+      _log('$command failed: $error');
     }
   }
 
-  static ResolvedStream? _resolvedFor(StationStream stream) =>
-      switch (stream.kind) {
-        StreamKind.progressive => ResolvedStream(
-          stream.url,
-          PlayableKind.progressive,
-        ),
-        StreamKind.hls => ResolvedStream(stream.url, PlayableKind.hls),
-        StreamKind.pls || StreamKind.m3u || StreamKind.unknown => null,
-      };
+  /// Resolves in the background, so a slow playlist never blocks a pause or
+  /// stop; the result comes back as an event stamped with [generation].
+  void _startResolve(StationStream stream, int generation) {
+    final inFlight = _inFlightResolve = _InFlightResolve(generation);
+    unawaited(
+      () async {
+        EngineEvent result;
+        try {
+          result = Resolved(generation, await _resolver.resolve(stream));
+        } on StreamResolutionException catch (e) {
+          result = ResolveFailed(generation, e.reason);
+        } catch (_) {
+          result = ResolveFailed(generation, null);
+        }
+        await _dispatch(result);
+      }().whenComplete(() => inFlight.done.complete()),
+    );
+  }
+
+  void _cancelTimers() {
+    for (final timer in _timers.values) {
+      timer.cancel();
+    }
+    _timers.clear();
+  }
+
+  // -------------------------------------------------------------------------
+  // Player inputs
+  // -------------------------------------------------------------------------
 
   void _onSnapshot(PlayerSnapshot snapshot) {
-    if (snapshot.generation != _generation) return;
-    final ready =
-        snapshot.state == PlayerProcessingState.ready && snapshot.playing;
-    switch (_status) {
-      case Connecting(:final station, :final streamIndex) when ready:
-        _setStatus(
-          PlaybackStatus.playing(station: station, streamIndex: streamIndex),
-        );
-      case Buffering(:final station, :final streamIndex) when ready:
-        _setStatus(
-          PlaybackStatus.playing(station: station, streamIndex: streamIndex),
-        );
-      case Playing(:final station, :final streamIndex)
-          when snapshot.state == PlayerProcessingState.buffering:
-        _setStatus(
-          PlaybackStatus.buffering(station: station, streamIndex: streamIndex),
-        );
-      case Playing(:final station) || Buffering(:final station)
-          when snapshot.state == PlayerProcessingState.completed:
-        // A live stream never ends: the server dropped us. Until reconnect
-        // lands (plan 01-09), end in an error instead of holding the
-        // foreground service with no audio.
-        unawaited(_fail(station, PlaybackErrorKind.streamUnreachable));
-      case _:
-        break;
+    if (snapshot.generation == _state.generation &&
+        snapshot.state == PlayerProcessingState.ready) {
+      _readySeenForGeneration = true;
+    }
+    unawaited(
+      _dispatch(
+        PlayerStateChanged(
+          snapshot.generation,
+          snapshot.state,
+          playing: snapshot.playing,
+        ),
+      ),
+    );
+  }
+
+  void _onFailure(PlayerFailure failure) =>
+      unawaited(_dispatch(PlayerFailed(failure.generation, failure.code)));
+
+  /// ICY "now playing" (RESEARCH Pattern 5). Only parseIcyTitle's output
+  /// (repaired, sanitised, junk-filtered) ever reaches the media session;
+  /// the raw title never does (T-08-01).
+  ///
+  /// Titles from a superseded load, or from the current load before its
+  /// first ready snapshot, are dropped (T-08-03). A junk title (null, empty,
+  /// '-', the station name, a URL) parses to null and clears the line.
+  void _onIcyTitle(IcyTitle icy) {
+    if (icy.generation != _state.generation || !_readySeenForGeneration) {
+      return;
+    }
+    final station = _state.station;
+    final stream = _state.currentStream;
+    if (station == null || stream == null) return;
+    _setNowPlaying(
+      parseIcyTitle(icy.title, station: station, charset: stream.icyCharset),
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // Publishing
+  // -------------------------------------------------------------------------
+
+  /// Publishes [value] when it differs from the last one (NowPlaying value
+  /// equality). Each media-item update redraws the notification, so an
+  /// unchanged title republishes nothing (Anti-Pattern 9, T-08-02).
+  ///
+  /// `_setNowPlaying(null)` is the clear (the ClearNowPlaying command): every
+  /// start or switch, pause, stop and failure runs it.
+  void _setNowPlaying(NowPlaying? value) {
+    if (value == _nowPlaying) return;
+    _nowPlaying = value;
+    _nowPlayingController.add(value);
+    final station = _state.status.stationOrNull;
+    if (station != null) {
+      _publishMediaItem(
+        mediaItemFor(station, _state.status, _strings, nowPlaying: value),
+      );
     }
   }
 
-  void _onFailure(PlayerFailure failure) {
-    if (failure.generation != _generation || !_isActive) return;
-    final station = _station;
-    if (station == null) return;
-    unawaited(_fail(station, PlaybackErrorKind.streamUnreachable));
-  }
-
-  Future<void> _fail(Station station, PlaybackErrorKind kind) async {
-    _generation++;
-    _setStatus(PlaybackStatus.error(station: station, kind: kind));
-    await _player.stop();
-    await _session.release();
-  }
-
-  void _setStatus(PlaybackStatus status) {
-    _status = status;
+  /// Publishes [status] to the media session and the app. The media item
+  /// goes first, so the notification never shows a new state under an old
+  /// subtitle; Idle clears it.
+  void _publishStatus(PlaybackStatus status) {
+    final station = status.stationOrNull;
+    _publishMediaItem(
+      station == null
+          ? null
+          : mediaItemFor(station, status, _strings, nowPlaying: _nowPlaying),
+    );
     playbackState.add(playbackStateFor(status));
     _statusController.add(status);
+  }
+
+  /// Every media-item update redraws the notification and the lock screen,
+  /// so an unchanged item is not sent again (ARCHITECTURE Anti-Pattern 9).
+  void _publishMediaItem(MediaItem? item) {
+    if (sameMediaItem(mediaItem.value, item)) return;
+    mediaItem.add(item);
   }
 
   void _setStation(Station? station) {
@@ -210,4 +490,39 @@ class RadioAudioHandler extends BaseAudioHandler {
     _station = station;
     _stationController.add(station);
   }
+
+  /// Appends to the diagnostics event log (newest last, at most
+  /// [EngineDiagnostics.maxRecentEvents]) and emits the diagnostics.
+  void _log(String message) {
+    _recentEvents.addLast(DiagnosticEvent(_now, message));
+    while (_recentEvents.length > EngineDiagnostics.maxRecentEvents) {
+      _recentEvents.removeFirst();
+    }
+    _emitDiagnostics();
+  }
+
+  void _emitDiagnostics() {
+    final s = _state;
+    final candidate = s.currentCandidate;
+    _diagnostics = EngineDiagnostics(
+      state: describeStatus(s.status),
+      stationId: s.station?.id,
+      streamIndex: s.station == null ? null : s.streamIndex,
+      candidateIndex: candidate == null ? null : s.candidateIndex,
+      url: candidate?.uri,
+      kind: candidate?.kind,
+      round: s.round,
+      lastTimeToAudio: _lastTimeToAudio,
+      recentEvents: List.unmodifiable(_recentEvents),
+    );
+    _diagnosticsController.add(_diagnostics);
+  }
+}
+
+/// The latest Resolve command and whether its result has been handled.
+final class _InFlightResolve {
+  _InFlightResolve(this.generation);
+
+  final int generation;
+  final done = Completer<void>();
 }

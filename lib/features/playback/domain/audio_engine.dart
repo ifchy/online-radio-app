@@ -1,4 +1,6 @@
 import '../../catalog/domain/station.dart';
+import 'engine_diagnostics.dart';
+import 'now_playing.dart';
 import 'play_context.dart';
 import 'playback_status.dart';
 
@@ -16,10 +18,23 @@ abstract interface class AudioEngine {
   /// receives the latest value first.
   Stream<Station?> get currentStation;
 
-  /// Starts [station] at the live edge.
+  /// What the current station says is on air (its parsed ICY title), or null
+  /// when there is nothing to show: no title yet, a junk title, an HLS
+  /// station, or not playing. Cleared on every station start, pause, stop and
+  /// failure. A new listener receives the latest value first.
+  Stream<NowPlaying?> get nowPlaying;
+
+  /// What the engine is doing, for the debug panel (D-07). In memory only.
+  /// A new listener receives the latest value first.
+  Stream<EngineDiagnostics> get diagnostics;
+
+  /// Starts [station] at the live edge, from `streams[startStreamIndex]`
+  /// (the debug panel's stream switcher); an invalid index starts at the
+  /// primary. [context] is the list next/previous move within.
   Future<void> play(
     Station station, {
     PlayContext context = const PlayContext.single(),
+    int startStreamIndex = 0,
   });
 
   /// Pauses when playing; otherwise resumes at the live edge.
@@ -27,4 +42,12 @@ abstract interface class AudioEngine {
 
   /// Stops playback, releases audio focus and removes the notification.
   Future<void> stop();
+
+  /// Starts the next station of the list the current one was started from,
+  /// wrapping at the end. Does nothing for a single station.
+  Future<void> skipToNext();
+
+  /// Starts the previous station of that list, wrapping at the start. Does
+  /// nothing for a single station.
+  Future<void> skipToPrevious();
 }

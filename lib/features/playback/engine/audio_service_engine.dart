@@ -2,7 +2,9 @@ import 'dart:async';
 
 import '../../catalog/domain/station.dart';
 import '../domain/audio_engine.dart';
+import '../domain/engine_diagnostics.dart';
 import '../domain/media_id.dart';
+import '../domain/now_playing.dart';
 import '../domain/play_context.dart';
 import '../domain/playback_status.dart';
 import 'radio_audio_handler.dart';
@@ -31,13 +33,30 @@ class AudioServiceEngine implements AudioEngine {
   );
 
   @override
+  Stream<NowPlaying?> get nowPlaying =>
+      _replayLatest(() => _handler.nowPlaying, _handler.nowPlayingStream);
+
+  @override
+  Stream<EngineDiagnostics> get diagnostics =>
+      _replayLatest(() => _handler.currentDiagnostics, _handler.diagnostics);
+
+  @override
   Future<void> play(
     Station station, {
     PlayContext context = const PlayContext.single(),
+    int startStreamIndex = 0,
   }) async {
     _handler.playContext = context;
-    await _handler.playFromMediaId(StationMediaId(station.id).format());
+    await _handler.playFromMediaId(StationMediaId(station.id).format(), {
+      RadioAudioHandler.startStreamIndexExtra: startStreamIndex,
+    });
   }
+
+  @override
+  Future<void> skipToNext() => _handler.skipToNext();
+
+  @override
+  Future<void> skipToPrevious() => _handler.skipToPrevious();
 
   @override
   Future<void> togglePause() async {

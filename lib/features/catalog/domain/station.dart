@@ -88,7 +88,9 @@ class Station with _$Station {
     required this.nameLatin,
     required this.streams,
     this.homepage,
-  }) : assert(streams.isNotEmpty, 'A station needs at least one stream') {
+  }) {
+    // An ArgumentError in every build mode; an assert here would throw an
+    // AssertionError instead in debug builds.
     if (streams.isEmpty) {
       throw ArgumentError.value(streams, 'streams', 'must not be empty');
     }

@@ -136,3 +136,47 @@ final class CurrentStationProvider
 }
 
 String _$currentStationHash() => r'0d91073337cbce0a9609dc61ea627f8ab2b1ef0b';
+
+/// Read-only mirror of the engine's now-playing value (ICY), or null.
+
+@ProviderFor(nowPlaying)
+final nowPlayingProvider = NowPlayingProvider._();
+
+/// Read-only mirror of the engine's now-playing value (ICY), or null.
+
+final class NowPlayingProvider
+    extends
+        $FunctionalProvider<
+          AsyncValue<NowPlaying?>,
+          NowPlaying?,
+          Stream<NowPlaying?>
+        >
+    with $FutureModifier<NowPlaying?>, $StreamProvider<NowPlaying?> {
+  /// Read-only mirror of the engine's now-playing value (ICY), or null.
+  NowPlayingProvider._()
+    : super(
+        from: null,
+        argument: null,
+        retry: null,
+        name: r'nowPlayingProvider',
+        isAutoDispose: false,
+        dependencies: null,
+        $allTransitiveDependencies: null,
+      );
+
+  @override
+  String debugGetCreateSourceHash() => _$nowPlayingHash();
+
+  @$internal
+  @override
+  $StreamProviderElement<NowPlaying?> $createElement(
+    $ProviderPointer pointer,
+  ) => $StreamProviderElement(pointer);
+
+  @override
+  Stream<NowPlaying?> create(Ref ref) {
+    return nowPlaying(ref);
+  }
+}
+
+String _$nowPlayingHash() => r'1ab13cedff5671a9a15ce8923c62feabfe029751';

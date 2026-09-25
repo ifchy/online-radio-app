@@ -1,0 +1,190 @@
+# CI for every pull request and every push to main (PLAT-04, D-15, D-17).
+#
+# Security (T-02-03): this workflow runs code from untrusted forks, so it
+# references no repository secrets, its token is read-only, and it never uses
+# the fork-privileged pull-request trigger. Signing happens only in release.yml
+# (v* tags and manual dispatch).
+#
+# Claude's-discretion decision (D-15): PR builds are NOT uploaded as artifacts.
+# The PR APK is debug-signed (there is no key.properties on PRs) and would clash
+# with CI-signed installs on the owner's phone. Use `flutter run --release`
+# locally, or the artifacts of a v* tag / manual release run.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  analyze-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: subosito/flutter-action@v2.23.0
+        with:
+          channel: stable
+          flutter-version: 3.47.5
+          cache: true
+
+      # Also regenerates lib/l10n (pubspec.yaml has flutter: generate: true).
+      - name: flutter pub get
+        run: flutter pub get
+
+      - name: Regenerate code (freezed, riverpod, json)
+        run: dart run build_runner build -d
+
+      # D-17: generated code is committed. Fail if codegen or gen-l10n changed
+      # a tracked file, or produced a file that was never committed.
+      - name: Generated code is up to date
+        run: |
+          git diff --exit-code
+          untracked="$(git status --porcelain --untracked-files=all)"
+          if [ -n "$untracked" ]; then
+            echo "$untracked"
+            echo "::error::Codegen produced files that are not committed. Run build_runner and flutter pub get locally and commit the output."
+            exit 1
+          fi
+
+      - name: flutter analyze
+        run: flutter analyze
+
+      # flutter analyze does not run analyzer plugins; dart analyze surfaces
+      # riverpod_lint (Pitfall B).
+      - name: dart analyze
+        run: dart analyze
+
+      - name: flutter test
+        run: flutter test
+
+      - name: No tracking or analytics SDKs (PLAT-06)
+        run: |
+          if grep -E '^  (firebase_|google_mobile_ads|sentry|appsflyer|amplitude|mixpanel|facebook_)' pubspec.lock; then
+            echo "::error file=pubspec.lock::A tracking or analytics SDK is in pubspec.lock. v1 ships none (PLAT-06)."
+            exit 1
+          fi
+
+      - name: Engine import boundary
+        run: |
+          offenders="$(grep -rlE "package:(just_audio|audio_service|audio_session|connectivity_plus)/" lib \
+            | grep -v '^lib/features/playback/engine/' \
+            | grep -v '^lib/app/bootstrap.dart' || true)"
+          if [ -n "$offenders" ]; then
+            echo "$offenders"
+            echo "::error::Only lib/features/playback/engine/ and lib/app/bootstrap.dart may import the audio/connectivity plugins."
+            exit 1
+          fi
+
+      # APP-07: media-session notifications are exempt from the Android 13
+      # notification runtime permission, so the app must not declare it.
+      - name: No notification runtime permission in the main manifest (APP-07)
+        run: |
+          if grep -n 'android.permission.POST_NOTIFICATIONS' android/app/src/main/AndroidManifest.xml; then
+            echo "::error file=android/app/src/main/AndroidManifest.xml::Remove POST_NOTIFICATIONS; media notifications do not need it (APP-07)."
+            exit 1
+          fi
+
+  release-apk-checks:
+    needs: analyze-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      APK: build/app/outputs/flutter-apk/app-release.apk
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/setup-java@v6.0.1
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2.23.0
+        with:
+          channel: stable
+          flutter-version: 3.47.5
+          cache: true
+
+      - name: flutter pub get
+        run: flutter pub get
+
+      # No android/key.properties here, so Gradle signs with the debug key.
+      # The APK is only inspected, never uploaded.
+      - name: Build release APK
+        run: flutter build apk --release
+
+      # Pitfall A: the Flutter template declares INTERNET only in the debug and
+      # profile manifests, so check what the release build really merged.
+      - name: Merged release manifest has the playback entries (Pitfall A, APP-07)
+        run: |
+          mapfile -t manifests < <(find build/app/intermediates -path '*merged_manifest*' -path '*release*' -name AndroidManifest.xml)
+          if [ "${#manifests[@]}" -eq 0 ]; then
+            echo "::error::No merged release manifest found under build/app/intermediates."
+            exit 1
+          fi
+          for m in "${manifests[@]}"; do
+            echo "Checking $m"
+            for needle in 'android.permission.INTERNET' \
+                          'android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK' \
+                          'foregroundServiceType="mediaPlayback"'; do
+              if ! grep -qF "$needle" "$m"; then
+                echo "::error::$m is missing $needle"
+                exit 1
+              fi
+            done
+            if grep -qF 'android.permission.POST_NOTIFICATIONS' "$m"; then
+              echo "::error::$m declares POST_NOTIFICATIONS (APP-07). Find the dependency that adds it and remove it with tools:node=\"remove\"."
+              exit 1
+            fi
+          done
+
+      - name: Release APK targets minSdk 24 and targetSdk 36 (PLAT-01)
+        run: |
+          : "${ANDROID_HOME:?ANDROID_HOME is not set on this runner}"
+          build_tools="$(ls -1 "$ANDROID_HOME/build-tools" | sort -V | tail -n 1)"
+          aapt2="$ANDROID_HOME/build-tools/$build_tools/aapt2"
+          echo "Using $aapt2"
+          badging="$("$aapt2" dump badging "$APK")"
+          grep -E "^(package|sdkVersion|targetSdkVersion)" <<<"$badging"
+          if ! grep -qx "sdkVersion:'24'" <<<"$badging"; then
+            echo "::error::Release APK minSdk is not 24."
+            exit 1
+          fi
+          if ! grep -qx "targetSdkVersion:'36'" <<<"$badging"; then
+            echo "::error::Release APK targetSdk is not 36."
+            exit 1
+          fi
+
+      # Pitfall I, D-05: the debug-only dead-primary station must never ship.
+      # Dart AOT keeps string literals in libapp.so, so `strings` finds them.
+      # The positive control (the notification channel id from bootstrap.dart)
+      # proves the extraction works, so a zero count is not vacuous.
+      - name: No debug stations in the release build (Pitfall I)
+        run: |
+          if ! unzip -l "$APK" 'lib/arm64-v8a/libapp.so' >/dev/null; then
+            echo "::error::lib/arm64-v8a/libapp.so is missing from the release APK."
+            exit 1
+          fi
+          unzip -p "$APK" lib/arm64-v8a/libapp.so | strings > "$RUNNER_TEMP/libapp.strings"
+          if ! grep -qF 'bg.izk.radio.playback' "$RUNNER_TEMP/libapp.strings"; then
+            echo "::error::Positive control failed: 'bg.izk.radio.playback' not found in libapp.so strings, so the leak check cannot be trusted."
+            exit 1
+          fi
+          count="$(grep -cF 'dead-primary.invalid' "$RUNNER_TEMP/libapp.strings" || true)"
+          echo "dead-primary.invalid occurrences: $count"
+          if [ "$count" != "0" ]; then
+            echo "::error::The debug dead-primary station is in the release build. Keep debug_stations.dart behind !kReleaseMode."
+            exit 1
+          fi

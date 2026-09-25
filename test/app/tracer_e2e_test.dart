@@ -5,17 +5,24 @@
 // media notification, the lock screen and headset buttons do through
 // audio_service.
 import 'package:audio_service/audio_service.dart';
+import 'package:clock/clock.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/testing.dart';
 import 'package:radio/app/app.dart';
+import 'package:radio/core/network/media_http_client.dart';
 import 'package:radio/features/catalog/application/catalog_providers.dart';
 import 'package:radio/features/catalog/data/station_directory.dart';
 import 'package:radio/features/catalog/domain/station.dart';
 import 'package:radio/features/playback/application/playback_providers.dart';
+import 'package:radio/features/playback/domain/engine_strings.dart';
 import 'package:radio/features/playback/domain/playback_status.dart';
 import 'package:radio/features/playback/engine/audio_service_engine.dart';
 import 'package:radio/features/playback/engine/ports.dart';
 import 'package:radio/features/playback/engine/radio_audio_handler.dart';
+import 'package:radio/features/playback/engine/resolver/stream_resolver.dart';
+import 'package:radio/l10n/app_localizations.dart';
 
 import '../support/fakes.dart';
 
@@ -32,7 +39,27 @@ void main() {
       final player = FakeStreamPlayer(log);
       final session = FakeAudioSessionPort(log);
       final directory = StationDirectory.phase1();
-      final handler = RadioAudioHandler(player, session, directory);
+      // A progressive stream must never touch the network in Dart: the
+      // resolver's client fails the test if it is ever called.
+      final resolver = HttpStreamResolver(
+        MediaHttpClient(
+          MockClient((request) async {
+            fail('Unexpected HTTP request for a progressive stream: $request');
+          }),
+          'eRadioto/test',
+        ),
+        const Clock(),
+      );
+      final strings = EngineStrings.fromLocalizations(
+        lookupAppLocalizations(const Locale('en')),
+      );
+      final handler = RadioAudioHandler(
+        player,
+        session,
+        directory,
+        resolver,
+        strings,
+      );
       final engine = AudioServiceEngine(handler);
       final station = directory.byId(StationId.curated('bg-radio'))!;
 
@@ -160,6 +187,26 @@ void main() {
       expect(stationEvents.first, isNull);
       expect(stationEvents, contains(station));
       expect(stationEvents.last, isNull);
+
+      // 8. Play from Android's media card after Stop (or a Bluetooth PLAY):
+      //    the last station starts again with a fresh load; the recent root
+      //    offers it for resumption.
+      final recent = await handler.getChildren(AudioService.recentRootId);
+      expect(recent.map((i) => i.title), [station.name]);
+      final loadsBefore = player.loads.length;
+      await handler.play();
+      await tester.pump();
+      expect(player.loads, hasLength(loadsBefore + 1));
+      expect(player.lastLoad.uri, station.streams.first.url);
+      expect(engine.currentStatus, isA<Connecting>());
+      expect(handler.playbackState.value.playing, isTrue);
+      expect(stationEvents.last, station);
+
+      // Cleanup: step 8 is still connecting, and its 10 s connect timer
+      // (01-09) must not outlive the test. Stop cancels every engine timer.
+      await engine.stop();
+      await tester.pump();
+      expect(engine.currentStatus, isA<Idle>());
     },
   );
 }

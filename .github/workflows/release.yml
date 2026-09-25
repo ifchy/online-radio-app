@@ -1,0 +1,193 @@
+# Signed release builds (PLAT-04, D-14, D-15).
+#
+# Runs only on v* tag pushes and manual dispatch, so the signing secrets are
+# never reachable from pull requests (T-02-03). Both artifacts of one run share
+# a versionCode: the workflow run number.
+#
+# Secret handling (T-02-02, T-02-05): secrets are mapped through env and written
+# with printf. Nothing echoes a value and nothing uses `set -x`. The keystore is
+# decoded into $RUNNER_TEMP, and the last step deletes it and
+# android/key.properties even when an earlier step failed.
+#
+# Owner guide: docs/RELEASE-SIGNING.md
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      APK: build/app/outputs/flutter-apk/app-release.apk
+      AAB: build/app/outputs/bundle/release/app-release.aab
+    steps:
+      # Fail before anything is built, so a missing secret can never produce a
+      # debug-signed or unsigned artifact.
+      - name: Require signing secrets
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          missing=()
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_PASSWORD ANDROID_KEY_ALIAS; do
+            if [ -z "${!name}" ]; then
+              missing+=("$name")
+            fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Missing or empty signing secrets: ${missing[*]}. Set them as described in docs/RELEASE-SIGNING.md. Refusing to build."
+            exit 1
+          fi
+          echo "All four signing secrets are set."
+
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/setup-java@v6.0.1
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Decode upload keystore
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          umask 077
+          printf '%s' "$KS_B64" | base64 -d > "$RUNNER_TEMP/upload.jks"
+          if [ ! -s "$RUNNER_TEMP/upload.jks" ]; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 did not decode to a keystore."
+            exit 1
+          fi
+          # Fail early, with a clear message, if the password or alias is wrong.
+          if ! keytool -list -keystore "$RUNNER_TEMP/upload.jks" -storepass:env KS_PASS -alias "$KEY_ALIAS" >/dev/null 2>&1; then
+            echo "::error::The keystore could not be opened with ANDROID_KEYSTORE_PASSWORD, or it has no entry named by ANDROID_KEY_ALIAS."
+            exit 1
+          fi
+          # Backslashes are escape characters in .properties files; double them.
+          printf 'storeFile=%s\nstorePassword=%s\nkeyPassword=%s\nkeyAlias=%s\n' \
+            "$RUNNER_TEMP/upload.jks" "${KS_PASS//\\/\\\\}" "${KEY_PASS//\\/\\\\}" "${KEY_ALIAS//\\/\\\\}" \
+            > android/key.properties
+
+      - uses: subosito/flutter-action@v2.23.0
+        with:
+          channel: stable
+          flutter-version: 3.47.5
+          cache: true
+
+      - name: flutter pub get
+        run: flutter pub get
+
+      - name: Build release AAB
+        run: flutter build appbundle --release --build-number=${{ github.run_number }}
+
+      - name: Build release APK
+        run: flutter build apk --release --build-number=${{ github.run_number }}
+
+      # T-02-04. The APK has only v2+ signatures (minSdk 24 turns v1/JAR signing
+      # off), which keytool cannot read, so the APK is checked with apksigner.
+      # The AAB is JAR-signed and is checked with keytool. Both must carry a
+      # certificate, neither may be the debug certificate, and both must be
+      # signed by the same key.
+      - name: Verify not debug-signed
+        run: |
+          : "${ANDROID_HOME:?ANDROID_HOME is not set on this runner}"
+          build_tools="$(ls -1 "$ANDROID_HOME/build-tools" | sort -V | tail -n 1)"
+          apksigner="$ANDROID_HOME/build-tools/$build_tools/apksigner"
+
+          apk_certs="$("$apksigner" verify --print-certs "$APK")"
+          printf '%s\n' "$apk_certs"
+          if ! grep -q '^Signer #1 certificate DN: ' <<<"$apk_certs"; then
+            echo "::error::The release APK has no signer certificate."
+            exit 1
+          fi
+          if grep -qF 'CN=Android Debug' <<<"$apk_certs"; then
+            echo "::error::The release APK is signed with the debug certificate."
+            exit 1
+          fi
+
+          aab_certs="$(keytool -printcert -jarfile "$AAB")"
+          printf '%s\n' "$aab_certs"
+          if ! grep -qE '^[[:space:]]*Owner: ' <<<"$aab_certs"; then
+            echo "::error::The release AAB is not signed."
+            exit 1
+          fi
+          if grep -qF 'CN=Android Debug' <<<"$aab_certs"; then
+            echo "::error::The release AAB is signed with the debug certificate."
+            exit 1
+          fi
+
+          apk_sha="$( { grep -m 1 '^Signer #1 certificate SHA-256 digest: ' <<<"$apk_certs" || true; } \
+            | sed 's/^Signer #1 certificate SHA-256 digest: //' | tr -d ' :' | tr 'A-F' 'a-f')"
+          aab_sha="$( { grep -m 1 -E '^[[:space:]]*SHA256: ' <<<"$aab_certs" || true; } \
+            | sed -E 's/^[[:space:]]*SHA256: //' | tr -d ' :' | tr 'A-F' 'a-f')"
+          if [ -z "$apk_sha" ] || [ "$apk_sha" != "$aab_sha" ]; then
+            echo "::error::The APK and the AAB are not signed with the same certificate (APK $apk_sha, AAB $aab_sha)."
+            exit 1
+          fi
+          echo "APK and AAB are signed with the upload certificate $apk_sha."
+
+      - name: APK carries the run number and SDK levels (PLAT-01)
+        run: |
+          build_tools="$(ls -1 "$ANDROID_HOME/build-tools" | sort -V | tail -n 1)"
+          badging="$("$ANDROID_HOME/build-tools/$build_tools/aapt2" dump badging "$APK")"
+          grep -E "^(package|sdkVersion|targetSdkVersion)" <<<"$badging"
+          if ! grep -qE "^package: name='bg.izk.radio' versionCode='${GITHUB_RUN_NUMBER}' " <<<"$badging"; then
+            echo "::error::The APK versionCode is not the run number ${GITHUB_RUN_NUMBER}."
+            exit 1
+          fi
+          if ! grep -qx "sdkVersion:'24'" <<<"$badging" || ! grep -qx "targetSdkVersion:'36'" <<<"$badging"; then
+            echo "::error::The APK is not minSdk 24 / targetSdk 36."
+            exit 1
+          fi
+
+      # Pitfall I, D-05: see the matching step in ci.yml.
+      - name: No debug stations in the release build (Pitfall I)
+        run: |
+          if ! unzip -l "$APK" 'lib/arm64-v8a/libapp.so' >/dev/null; then
+            echo "::error::lib/arm64-v8a/libapp.so is missing from the release APK."
+            exit 1
+          fi
+          unzip -p "$APK" lib/arm64-v8a/libapp.so | strings > "$RUNNER_TEMP/libapp.strings"
+          if ! grep -qF 'bg.izk.radio.playback' "$RUNNER_TEMP/libapp.strings"; then
+            echo "::error::Positive control failed: 'bg.izk.radio.playback' not found in libapp.so strings, so the leak check cannot be trusted."
+            exit 1
+          fi
+          count="$(grep -cF 'dead-primary.invalid' "$RUNNER_TEMP/libapp.strings" || true)"
+          echo "dead-primary.invalid occurrences: $count"
+          if [ "$count" != "0" ]; then
+            echo "::error::The debug dead-primary station is in the release build."
+            exit 1
+          fi
+
+      # Artifact names may not contain '/', which a branch-dispatched run's
+      # ref name can (e.g. feature/x). Tags like v0.1.0-rc.1 are unchanged.
+      - name: Artifact name
+        id: artifact
+        run: echo "name=eradioto-${GITHUB_REF_NAME//\//-}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: |
+            build/app/outputs/bundle/release/app-release.aab
+            build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+
+      - name: Remove keystore and key.properties
+        if: always()
+        run: rm -f "$RUNNER_TEMP/upload.jks" android/key.properties
