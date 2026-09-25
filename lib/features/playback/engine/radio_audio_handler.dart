@@ -71,7 +71,8 @@ class RadioAudioHandler extends BaseAudioHandler {
     this._directory,
     this._resolver,
     this._strings,
-    this._connectivity, {
+    this._connectivity,
+    this._wifiLock, {
     EngineTimings timings = const EngineTimings(),
     Clock? clock,
     RetryBudgetPreset initialRetryBudget = RetryBudgetPreset.standard,
@@ -108,6 +109,9 @@ class RadioAudioHandler extends BaseAudioHandler {
   final StreamResolver _resolver;
   final EngineStrings _strings;
   final ConnectivityPort _connectivity;
+  // RED scaffolding (01-13 Task 2): used in the GREEN step.
+  // ignore: unused_field
+  final WifiLockPort _wifiLock;
   final PlaybackStateMachine _machine;
 
   /// Null: the zone's clock (fake under fakeAsync).

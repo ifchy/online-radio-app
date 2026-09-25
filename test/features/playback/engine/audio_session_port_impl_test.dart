@@ -23,9 +23,8 @@ void main() {
   }
 
   test('every FocusChange is produced by some event', () {
-    expect(
-      {for (final (_, _, change) in cases) ?change},
-      FocusChange.values.toSet(),
-    );
+    expect({
+      for (final (_, _, change) in cases) ?change,
+    }, FocusChange.values.toSet());
   });
 }

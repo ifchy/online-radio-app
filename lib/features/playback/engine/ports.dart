@@ -175,6 +175,17 @@ abstract interface class ConnectivityPort {
   Future<bool> isOnline();
 }
 
+/// The Wi-Fi lock that keeps the Wi-Fi radio awake with the screen off
+/// (PLAT-03). just_audio holds none, so the engine takes one itself, and
+/// only while audio is live or recovering (PLAT-06, T-13-01).
+abstract interface class WifiLockPort {
+  Future<void> acquire();
+
+  Future<void> release();
+
+  Future<bool> isHeld();
+}
+
 /// Turns a catalogue [StationStream] into directly playable endpoints.
 ///
 /// Neither just_audio nor ExoPlayer parses `.pls`/`.m3u` wrappers, and the

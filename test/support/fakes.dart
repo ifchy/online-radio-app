@@ -357,3 +357,31 @@ class FakeConnectivityPort implements ConnectivityPort {
 
   Future<void> close() => _changes.close();
 }
+
+/// [WifiLockPort] that counts acquire and release calls and tracks whether
+/// the lock is held (non-reference-counted, like the real lock).
+class FakeWifiLockPort implements WifiLockPort {
+  FakeWifiLockPort([CallLog? log]) : log = log ?? CallLog();
+
+  final CallLog log;
+  int acquireCalls = 0;
+  int releaseCalls = 0;
+  bool held = false;
+
+  @override
+  Future<void> acquire() async {
+    acquireCalls++;
+    held = true;
+    log.add('wifi acquire');
+  }
+
+  @override
+  Future<void> release() async {
+    releaseCalls++;
+    held = false;
+    log.add('wifi release');
+  }
+
+  @override
+  Future<bool> isHeld() async => held;
+}

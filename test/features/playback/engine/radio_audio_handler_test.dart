@@ -95,11 +95,13 @@ void main() {
   late FakeStreamPlayer player;
   late FakeAudioSessionPort session;
   late FakeConnectivityPort connectivity;
+  late FakeWifiLockPort wifiLock;
 
   setUp(() {
     player = FakeStreamPlayer();
     session = FakeAudioSessionPort();
     connectivity = FakeConnectivityPort();
+    wifiLock = FakeWifiLockPort();
   });
 
   (RadioAudioHandler, _RecordingResolver) build(http.Client client) {
@@ -116,6 +118,7 @@ void main() {
       resolver,
       _english,
       connectivity,
+      wifiLock,
     );
     addTearDown(handler.dispose);
     return (handler, resolver);
@@ -658,6 +661,7 @@ void main() {
         resolver,
         _english,
         connectivity,
+        wifiLock,
       );
       addTearDown(handler.dispose);
       return handler;
@@ -1004,6 +1008,7 @@ void main() {
         resolver,
         _english,
         connectivity,
+        wifiLock,
       );
       addTearDown(handler.dispose);
       engine = AudioServiceEngine(handler);
@@ -1129,6 +1134,7 @@ void main() {
               FakeStreamResolver(),
               _english,
               connectivity,
+              wifiLock,
             )
           : RadioAudioHandler(
               player,
@@ -1137,6 +1143,7 @@ void main() {
               FakeStreamResolver(),
               _english,
               connectivity,
+              wifiLock,
               initialRetryBudget: initial,
             );
       addTearDown(handler.dispose);
@@ -1217,6 +1224,7 @@ void main() {
           resolver,
           _english,
           connectivity,
+          wifiLock,
           reconnectPolicy: ReconnectPolicy(Random(0), jitter: 0),
         );
         addTearDown(handler.dispose);
@@ -1579,6 +1587,7 @@ void main() {
         resolver,
         _english,
         connectivity,
+        wifiLock,
         reconnectPolicy: ReconnectPolicy(Random(0), jitter: 0),
       );
       addTearDown(handler.dispose);
@@ -1871,6 +1880,7 @@ void main() {
         FakeStreamResolver(),
         _english,
         connectivity,
+        wifiLock,
         reconnectPolicy: ReconnectPolicy(Random(0), jitter: 0),
       );
       addTearDown(handler.dispose);
@@ -2104,6 +2114,317 @@ void main() {
         expect(player.loads, hasLength(loads));
         expect(handler.status, isA<PlaybackError>());
       });
+    });
+  });
+
+  group('Wi-Fi lock, focus and the foreground service per state (PLAT-03, '
+      'PLAT-06, PLAY-01), under fakeAsync', () {
+    final first = StationStream(
+      url: Uri.parse('https://lock.example/primary.mp3'),
+      kind: StreamKind.progressive,
+    );
+    final station = Station(
+      id: StationId.debug('lock'),
+      name: 'Лок',
+      nameLatin: 'Lok',
+      streams: [first],
+    );
+    final lockDirectory = StationDirectory([station]);
+
+    late CallLog log;
+
+    /// Built inside the fakeAsync zone; player and session share one log,
+    /// so focus can be read from the order of loads and releases.
+    RadioAudioHandler handlerWith() {
+      log = CallLog();
+      player = FakeStreamPlayer(log);
+      session = FakeAudioSessionPort(log);
+      final handler = RadioAudioHandler(
+        player,
+        session,
+        lockDirectory,
+        FakeStreamResolver(),
+        _english,
+        connectivity,
+        wifiLock,
+        reconnectPolicy: ReconnectPolicy(Random(0), jitter: 0),
+      );
+      addTearDown(handler.dispose);
+      return handler;
+    }
+
+    /// just_audio requests focus when a load starts playing; the engine
+    /// abandons it with release(). Focus is held when the last load came
+    /// after the last release.
+    bool focusHeld() =>
+        log.entries.lastIndexOf('load') > log.entries.lastIndexOf('release');
+
+    void ready(FakeAsync async) {
+      player.emitSnapshot(
+        PlayerProcessingState.ready,
+        playing: true,
+        generation: player.lastLoad.generation,
+      );
+      async.flushMicrotasks();
+    }
+
+    RadioAudioHandler connecting(FakeAsync async) {
+      final handler = handlerWith();
+      async.flushMicrotasks();
+      unawaited(handler.playFromMediaId(_mediaId(station)));
+      async.flushMicrotasks();
+      return handler;
+    }
+
+    RadioAudioHandler playing(FakeAsync async) {
+      final handler = connecting(async);
+      ready(async);
+      return handler;
+    }
+
+    RadioAudioHandler after(
+      FakeAsync async,
+      RadioAudioHandler handler,
+      void Function() action,
+    ) {
+      action();
+      async.flushMicrotasks();
+      return handler;
+    }
+
+    final states =
+        <
+          String,
+          (
+            RadioAudioHandler Function(FakeAsync),
+            TypeMatcher<PlaybackStatus>,
+            bool,
+            bool,
+            bool,
+          )
+        >{
+          'Idle': (
+            (async) {
+              final h = handlerWith();
+              async.flushMicrotasks();
+              return h;
+            },
+            isA<Idle>(),
+            false,
+            false,
+            false,
+          ),
+          'Connecting': (connecting, isA<Connecting>(), true, true, true),
+          'Playing': (playing, isA<Playing>(), true, true, true),
+          'Buffering': (
+            (async) {
+              final h = playing(async);
+              return after(
+                async,
+                h,
+                () => player.emitSnapshot(
+                  PlayerProcessingState.buffering,
+                  playing: true,
+                  generation: player.lastLoad.generation,
+                ),
+              );
+            },
+            isA<Buffering>(),
+            true,
+            true,
+            true,
+          ),
+          'Reconnecting': (
+            (async) {
+              final h = playing(async);
+              return after(
+                async,
+                h,
+                () =>
+                    player.emitFailure(generation: player.lastLoad.generation),
+              );
+            },
+            isA<Reconnecting>(),
+            true,
+            true,
+            true,
+          ),
+          'Interrupted': (
+            (async) {
+              final h = playing(async);
+              return after(
+                async,
+                h,
+                () => session.emitFocus(FocusChange.transientLoss),
+              );
+            },
+            isA<Interrupted>(),
+            true,
+            false,
+            true,
+          ),
+          'Paused': (
+            (async) {
+              final h = playing(async);
+              return after(async, h, () => unawaited(h.pause()));
+            },
+            isA<Paused>(),
+            false,
+            false,
+            false,
+          ),
+          'PlaybackError': (
+            (async) {
+              final h = handlerWith();
+              async.flushMicrotasks();
+              player.onLoad = (_, generation) => scheduleMicrotask(
+                () => player.emitFailure(generation: generation),
+              );
+              unawaited(h.playFromMediaId(_mediaId(station)));
+              async.flushMicrotasks();
+              player.onLoad = null;
+              return h;
+            },
+            isA<PlaybackError>(),
+            false,
+            false,
+            false,
+          ),
+        };
+
+    for (final MapEntry(
+          key: label,
+          value: (make, matcher, playingFlag, wifiHeld, focus),
+        )
+        in states.entries) {
+      test('$label: playing $playingFlag, Wi-Fi lock '
+          '${wifiHeld ? 'held' : 'released'}, focus '
+          '${focus ? 'held' : 'released'} (RESEARCH FGS table)', () {
+        fakeAsync((async) {
+          final handler = make(async);
+          expect(handler.status, matcher);
+          expect(handler.playbackState.value.playing, playingFlag);
+          expect(wifiLock.held, wifiHeld);
+          expect(focusHeld(), focus);
+          if (label == 'Idle') {
+            expect(
+              handler.playbackState.value.processingState,
+              AudioProcessingState.idle,
+            );
+          }
+        });
+      });
+    }
+
+    test('the lock is acquired once on entering the active set and released '
+        'once on leaving it; moves inside a set make no calls', () {
+      fakeAsync((async) {
+        final handler = connecting(async);
+        expect((wifiLock.acquireCalls, wifiLock.releaseCalls), (1, 0));
+        ready(async);
+        player.emitSnapshot(
+          PlayerProcessingState.buffering,
+          playing: true,
+          generation: player.lastLoad.generation,
+        );
+        async.flushMicrotasks();
+        ready(async);
+        player.emitFailure(generation: player.lastLoad.generation);
+        async.flushMicrotasks();
+        expect(handler.status, isA<Reconnecting>());
+        async.elapse(Duration.zero);
+        expect(handler.status, isA<Connecting>());
+        ready(async);
+        expect(handler.status, isA<Playing>());
+        expect((wifiLock.acquireCalls, wifiLock.releaseCalls), (1, 0));
+
+        session.emitFocus(FocusChange.transientLoss);
+        async.flushMicrotasks();
+        expect((wifiLock.acquireCalls, wifiLock.releaseCalls), (1, 1));
+        session.emitFocus(FocusChange.gainAfterPause);
+        async.flushMicrotasks();
+        expect((wifiLock.acquireCalls, wifiLock.releaseCalls), (2, 1));
+        ready(async);
+
+        unawaited(handler.pause());
+        async.flushMicrotasks();
+        expect((wifiLock.acquireCalls, wifiLock.releaseCalls), (2, 2));
+        unawaited(handler.stop());
+        async.flushMicrotasks();
+        // Paused -> Idle stays in the released set.
+        expect((wifiLock.acquireCalls, wifiLock.releaseCalls), (2, 2));
+
+        unawaited(handler.play());
+        async.flushMicrotasks();
+        expect((wifiLock.acquireCalls, wifiLock.releaseCalls), (3, 2));
+        unawaited(handler.stop());
+        async.flushMicrotasks();
+        expect((wifiLock.acquireCalls, wifiLock.releaseCalls), (3, 3));
+        expect(wifiLock.held, isFalse);
+      });
+    });
+
+    test('after stop(): transport stopped, focus released, Wi-Fi lock '
+        'released and processingState idle', () {
+      fakeAsync((async) {
+        final handler = playing(async);
+        final stops = player.stopCalls;
+        unawaited(handler.stop());
+        async.flushMicrotasks();
+        expect(player.stopCalls, greaterThan(stops));
+        expect(session.releaseCalls, 1);
+        expect(focusHeld(), isFalse);
+        expect(wifiLock.held, isFalse);
+        final state = handler.playbackState.value;
+        expect(state.processingState, AudioProcessingState.idle);
+        expect(state.playing, isFalse);
+      });
+    });
+
+    group('onTaskRemoved (a swipe from recents)', () {
+      for (final label in ['Paused', 'PlaybackError', 'Idle']) {
+        test('while $label: stop, so the service ends', () {
+          fakeAsync((async) {
+            final handler = states[label]!.$1(async);
+            unawaited(handler.onTaskRemoved());
+            async.flushMicrotasks();
+            expect(handler.status, const PlaybackStatus.idle());
+            expect(
+              handler.playbackState.value.processingState,
+              AudioProcessingState.idle,
+            );
+            expect(
+              handler.currentDiagnostics.recentEvents.last.message,
+              startsWith('UserStop'),
+            );
+            expect(wifiLock.held, isFalse);
+          });
+        });
+      }
+
+      for (final label in [
+        'Connecting',
+        'Playing',
+        'Buffering',
+        'Reconnecting',
+        'Interrupted',
+      ]) {
+        test('while $label: keeps playing, nothing changes', () {
+          fakeAsync((async) {
+            final handler = states[label]!.$1(async);
+            final status = handler.status;
+            final stops = player.stopCalls;
+            final releases = session.releaseCalls;
+            unawaited(handler.onTaskRemoved());
+            async.flushMicrotasks();
+            expect(handler.status, status);
+            expect(handler.playbackState.value.playing, isTrue);
+            expect(player.stopCalls, stops);
+            expect(session.releaseCalls, releases);
+            expect(wifiLock.releaseCalls, label == 'Interrupted' ? 1 : 0);
+          });
+        });
+      }
     });
   });
 }

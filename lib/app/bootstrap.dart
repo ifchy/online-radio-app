@@ -24,6 +24,7 @@ import '../features/playback/engine/just_audio_stream_player.dart';
 import '../features/playback/engine/radio_audio_handler.dart';
 import '../features/playback/engine/resolver/stream_resolver.dart';
 import '../features/playback/engine/state_machine.dart';
+import '../features/playback/engine/wifi_lock_channel.dart';
 import '../l10n/app_localizations.dart';
 import 'app.dart';
 
@@ -73,6 +74,9 @@ Future<void> bootstrap() async {
         Connectivity(),
         debounce: const EngineTimings().connectivityDebounce,
       ),
+      // Keeps Wi-Fi awake with the screen off, only while audio is live or
+      // recovering (PLAT-03, PLAT-06).
+      WifiLockChannel(),
     ),
     config: AudioServiceConfig(
       // Permanent once shipped: Android keeps the user's channel settings.
