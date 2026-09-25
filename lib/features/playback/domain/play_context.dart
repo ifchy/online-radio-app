@@ -1,7 +1,6 @@
 import '../../catalog/domain/station.dart';
 
 /// The list a station was started from, so next/previous can move within it.
-/// Skip logic lands in plan 01-09.
 sealed class PlayContext {
   const PlayContext();
 
@@ -11,6 +10,10 @@ sealed class PlayContext {
   /// A station started from an ordered list, e.g. the home list.
   const factory PlayContext.list(List<StationId> ids, {String source}) =
       ListPlayContext;
+
+  /// The station [delta] places after [current] in this list, wrapping
+  /// around at the ends; null when there is nothing to move to.
+  StationId? neighbour(StationId current, int delta) => null;
 }
 
 final class SinglePlayContext extends PlayContext {

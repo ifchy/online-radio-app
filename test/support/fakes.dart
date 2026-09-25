@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:radio/features/catalog/domain/station.dart';
 import 'package:radio/features/playback/domain/audio_engine.dart';
+import 'package:radio/features/playback/domain/engine_diagnostics.dart';
 import 'package:radio/features/playback/domain/now_playing.dart';
 import 'package:radio/features/playback/domain/play_context.dart';
 import 'package:radio/features/playback/domain/playback_status.dart';
@@ -9,10 +10,11 @@ import 'package:radio/features/playback/engine/ports.dart';
 
 /// A recorded [FakeEngine.play] call.
 class PlayCall {
-  const PlayCall(this.station, this.context);
+  const PlayCall(this.station, this.context, {this.startStreamIndex = 0});
 
   final Station station;
   final PlayContext context;
+  final int startStreamIndex;
 }
 
 /// [AudioEngine] for widget tests: the test sets the status and current
@@ -30,13 +32,33 @@ class FakeEngine implements AudioEngine {
   PlaybackStatus _status;
   Station? _station;
   NowPlaying? _nowPlaying;
+  EngineDiagnostics _diagnostics = const EngineDiagnostics.initial();
   final _statusChanges = StreamController<PlaybackStatus>.broadcast();
   final _stationChanges = StreamController<Station?>.broadcast();
   final _nowPlayingChanges = StreamController<NowPlaying?>.broadcast();
+  final _diagnosticsChanges = StreamController<EngineDiagnostics>.broadcast();
 
   final List<PlayCall> playCalls = [];
   int togglePauseCalls = 0;
   int stopCalls = 0;
+  int skipToNextCalls = 0;
+  int skipToPreviousCalls = 0;
+
+  /// Publishes [diagnostics] as the engine's diagnostics.
+  void setDiagnostics(EngineDiagnostics diagnostics) {
+    _diagnostics = diagnostics;
+    _diagnosticsChanges.add(diagnostics);
+  }
+
+  @override
+  Stream<EngineDiagnostics> get diagnostics =>
+      _replayLatest(() => _diagnostics, _diagnosticsChanges.stream);
+
+  @override
+  Future<void> skipToNext() async => skipToNextCalls++;
+
+  @override
+  Future<void> skipToPrevious() async => skipToPreviousCalls++;
 
   /// Publishes [status]; the current station is left as it is.
   void setStatus(PlaybackStatus status) {
@@ -75,7 +97,10 @@ class FakeEngine implements AudioEngine {
   Future<void> play(
     Station station, {
     PlayContext context = const PlayContext.single(),
-  }) async => playCalls.add(PlayCall(station, context));
+    int startStreamIndex = 0,
+  }) async => playCalls.add(
+    PlayCall(station, context, startStreamIndex: startStreamIndex),
+  );
 
   @override
   Future<void> togglePause() async => togglePauseCalls++;

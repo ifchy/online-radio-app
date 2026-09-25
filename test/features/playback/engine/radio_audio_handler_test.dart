@@ -17,6 +17,7 @@ import 'package:radio/features/playback/domain/engine_diagnostics.dart';
 import 'package:radio/features/playback/domain/engine_strings.dart';
 import 'package:radio/features/playback/domain/media_id.dart';
 import 'package:radio/features/playback/domain/now_playing.dart';
+import 'package:radio/features/playback/domain/play_context.dart';
 import 'package:radio/features/playback/domain/playback_status.dart';
 import 'package:radio/features/playback/engine/audio_service_engine.dart';
 import 'package:radio/features/playback/engine/ports.dart';
@@ -943,6 +944,151 @@ void main() {
           orderedEquals([...log.map((e) => e.at)]..sort()),
         );
       });
+    });
+  });
+
+  group('next/previous and the start stream (PLAY-03, D-12)', () {
+    StationStream progressive(String url) =>
+        StationStream(url: Uri.parse(url), kind: StreamKind.progressive);
+    Station station(String key, int streams) => Station(
+      id: StationId.debug(key),
+      name: key,
+      nameLatin: key,
+      streams: [
+        for (var i = 0; i < streams; i++)
+          progressive('http://$key.example/stream$i'),
+      ],
+    );
+
+    final a = station('a', 1);
+    final b = station('b', 1);
+    final c = station('c', 3);
+    final list = PlayContext.list([a.id, b.id, c.id], source: 'home');
+
+    late FakeStreamResolver resolver;
+    late RadioAudioHandler handler;
+    late AudioServiceEngine engine;
+
+    setUp(() {
+      resolver = FakeStreamResolver();
+      handler = RadioAudioHandler(
+        player,
+        session,
+        StationDirectory([a, b, c]),
+        resolver,
+        _english,
+      );
+      addTearDown(handler.dispose);
+      engine = AudioServiceEngine(handler);
+    });
+
+    group('PlayContext.neighbour', () {
+      test('wraps within a list both ways', () {
+        expect(list.neighbour(c.id, 1), a.id);
+        expect(list.neighbour(a.id, -1), c.id);
+        expect(list.neighbour(a.id, 1), b.id);
+        expect(list.neighbour(b.id, -1), a.id);
+      });
+
+      test('is null for a single station, a station not in the list and a '
+          'one-station list', () {
+        const single = PlayContext.single();
+        expect(single.neighbour(a.id, 1), isNull);
+        expect(single.neighbour(a.id, -1), isNull);
+        expect(PlayContext.list([a.id, b.id]).neighbour(c.id, 1), isNull);
+        expect(PlayContext.list([a.id]).neighbour(a.id, 1), isNull);
+      });
+    });
+
+    test('skipToNext from the last station of the list starts the first, '
+        'with the same list', () async {
+      await engine.play(c, context: list);
+      await handler.skipToNext();
+      expect(handler.currentStation, a);
+      expect(handler.status, isA<Connecting>());
+      expect(player.lastLoad.uri, a.streams.first.url);
+
+      // Still the same list: previous from the first goes back to the last.
+      await handler.skipToPrevious();
+      expect(handler.currentStation, c);
+      expect(player.lastLoad.uri, c.streams.first.url);
+    });
+
+    test('headset and car next/previous buttons step through the list '
+        '(MediaButton.next/previous)', () async {
+      await engine.play(a, context: list);
+      await handler.click(MediaButton.next);
+      expect(handler.currentStation, b);
+      await handler.click(MediaButton.previous);
+      await handler.click(MediaButton.previous);
+      expect(handler.currentStation, c);
+    });
+
+    test('the engine facade skips too', () async {
+      await engine.play(b, context: list);
+      await engine.skipToNext();
+      expect(handler.currentStation, c);
+      await engine.skipToPrevious();
+      expect(handler.currentStation, b);
+    });
+
+    test('with a single station, next and previous do nothing', () async {
+      await engine.play(b);
+      final loads = player.loads.length;
+      await handler.skipToNext();
+      await handler.skipToPrevious();
+      expect(player.loads, hasLength(loads));
+      expect(handler.currentStation, b);
+    });
+
+    test('the notification keeps Pause and Stop only, with no skip action '
+        '(D-12)', () async {
+      await engine.play(a, context: list);
+      await handler.skipToNext();
+      final state = handler.playbackState.value;
+      expect(
+        [for (final c in state.controls) c.action],
+        [MediaAction.pause, MediaAction.stop],
+      );
+      expect(state.systemActions, isEmpty);
+    });
+
+    test('play(station, startStreamIndex: 2) starts on streams[2]', () async {
+      await engine.play(c, startStreamIndex: 2);
+      expect(player.loads.map((l) => l.uri), [c.streams[2].url]);
+      expect(
+        handler.status,
+        PlaybackStatus.connecting(station: c, streamIndex: 2, round: 0),
+      );
+    });
+
+    test('playFromMediaId without extras starts on streams[0]', () async {
+      await handler.playFromMediaId(_mediaId(c));
+      expect(player.loads.map((l) => l.uri), [c.streams.first.url]);
+    });
+
+    for (final (label, extras) in [
+      ('an out-of-range index', <String, dynamic>{'startStreamIndex': 7}),
+      ('a negative index', <String, dynamic>{'startStreamIndex': -1}),
+      ('a non-integer value', <String, dynamic>{'startStreamIndex': '2'}),
+    ]) {
+      test('playFromMediaId with $label starts on streams[0]', () async {
+        await handler.playFromMediaId(_mediaId(c), extras);
+        expect(player.loads.map((l) => l.uri), [c.streams.first.url]);
+      });
+    }
+
+    test('playFromMediaId with extras startStreamIndex 1 starts on '
+        'streams[1]', () async {
+      await handler.playFromMediaId(_mediaId(c), {'startStreamIndex': 1});
+      expect(player.loads.map((l) => l.uri), [c.streams[1].url]);
+    });
+
+    test('engine.diagnostics replays the latest diagnostics', () async {
+      await engine.play(c, startStreamIndex: 1);
+      final latest = await engine.diagnostics.first;
+      expect(latest.stationId, c.id);
+      expect(latest.streamIndex, 1);
     });
   });
 }
