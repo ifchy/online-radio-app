@@ -4,16 +4,16 @@ milestone: v1.0
 current_phase: 01
 current_phase_name: Playback Engine & Walking Skeleton
 status: executing
-stopped_at: Completed 01-05-PLAN.md
-last_updated: "2026-09-25T16:11:46.927Z"
+stopped_at: Completed 01-07-PLAN.md
+last_updated: "2026-09-25T16:26:45.056Z"
 last_activity: 2026-09-25
-last_activity_desc: Completed 01-05 owner-verified station list (5 stations, debug test stations)
-state_head: 8b2b0588f5d9c368691f4a02872162fb33db6389
+last_activity_desc: Completed 01-07 localised notification state text, icon, channel name and first-launch date
+state_head: 1085ccf33e99440eec1e0546c12accedfd482ac0
 progress:
   total_phases: 4
   completed_phases: 0
   total_plans: 13
-  completed_plans: 5
+  completed_plans: 6
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-09-24)
 ## Current Position
 
 Phase: 01 (Playback Engine & Walking Skeleton) — EXECUTING
-Plan: 5 of 13 complete (01-01, 01-03, 01-04, 01-05, 01-06); 01-02 (Wave 2) still open, waiting on the owner's keystore
+Plan: 6 of 13 complete (01-01, 01-03, 01-04, 01-05, 01-06, 01-07); 01-02 (Wave 2) still open, waiting on the owner's keystore
 Status: Ready to execute
-Last activity: 2026-09-25 — Completed 01-05 owner-verified station list (5 stations, debug test stations)
+Last activity: 2026-09-25 — Completed 01-07 localised notification state text, icon, channel name and first-launch date
 
-Progress: [████░░░░░░] 38% (5/13 plans in Phase 01)
+Progress: [█████░░░░░] 46% (6/13 plans in Phase 01)
 
 ## Performance Metrics
 
@@ -64,6 +64,7 @@ Progress: [████░░░░░░] 38% (5/13 plans in Phase 01)
 | Phase 01 P04 | 13 min | 2 tasks | 14 files |
 | Phase 01 P06 | 6 min | 2 tasks | 8 files |
 | Phase 01 P05 | 6 min | 2 tasks | 7 files |
+| Phase 01 P07 | 8 min | 2 tasks | 13 files |
 
 ## Accumulated Context
 
@@ -94,6 +95,11 @@ Recent decisions affecting current work:
 - [Phase 01]: [01-05]: БНР Хоризонт is HLS-only (lb-hls.cdn.bg, then e106-ts.cdn.bg, both from bnr.bg's player). The port-8011 AAC/MP3 mounts were REJECTED.
 - [Phase 01]: [01-05]: No release station uses a .pls/.m3u wrapper or a cp1251 charset. Wrapper coverage (STRM-03) comes from the 01-04 resolver tests, and cp1251 from the 01-06 goldens. Non-.m3u8 HLS is covered by the debug-only "ТЕСТ: Хоризонт (HLS sniff)" entry (kind unknown).
 - [Phase 01]: [01-05]: StationDirectory.phase1 appends debugStations only when `!kReleaseMode && includeDebug` (const-false in release). Only station_directory.dart may import debug_stations.dart.
+- [Phase 01]: [01-07]: Engine-side text comes from EngineStrings (built in bootstrap via lookupAppLocalizations(resolveAppLocale(PlatformDispatcher.instance.locale))); mediaItemFor puts the D-09 state text in displaySubtitle and artist, the title is always the station name; 01-08 puts ICY text there while Playing
+- [Phase 01]: [01-07]: RadioAudioHandler._setStatus publishes the media item (before PlaybackState) only when sameMediaItem says it changed; MediaItem == compares only the id, so never dedupe with ==
+- [Phase 01]: [01-07]: ic_stat_radio (notification small icon, Material Symbols radio, Apache-2.0) is in res/raw/keep.xml; any new drawable audio_service looks up by name must be added there too
+- [Phase 01]: [01-07]: audio_service creates the notification channel only once, so its name is fixed by the device language at first run; the owner must reinstall before checking 'Възпроизвеждане'
+- [Phase 01]: [01-07]: first_launch_at is written once in UTC ISO-8601 via SharedPreferencesAsync before AudioService.init; an unreadable value reads as null so startup never fails; firstLaunchAtProvider is overridden in bootstrap
 
 ### Pending Todos
 
@@ -123,6 +129,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-09-25T16:11:46.858Z
-Stopped at: Completed 01-05-PLAN.md
+Last session: 2026-09-25T16:26:44.986Z
+Stopped at: Completed 01-07-PLAN.md
 Resume file: None
