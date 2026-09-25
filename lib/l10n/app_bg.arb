@@ -1,3 +1,17 @@
 {
-  "@@locale": "bg"
+  "@@locale": "bg",
+  "appTitle": "eRadioto",
+  "stationListTitle": "Станции",
+  "actionPlay": "Пусни",
+  "actionPause": "Пауза",
+  "actionStop": "Спри",
+  "playStationHint": "Пусни {station}",
+  "stateConnecting": "Свързване…",
+  "stateBuffering": "Буфериране…",
+  "stateReconnecting": "Повторно свързване…",
+  "stateInterrupted": "Прекъснато",
+  "statePaused": "На пауза",
+  "stateError": "Грешка",
+  "notificationChannelName": "Възпроизвеждане",
+  "miniPlayerRegionLabel": "Сега звучи: {station}"
 }

@@ -13,45 +13,45 @@ class AppLocalizationsBg extends AppLocalizations {
   String get appTitle => 'eRadioto';
 
   @override
-  String get stationListTitle => 'Stations';
+  String get stationListTitle => 'Станции';
 
   @override
-  String get actionPlay => 'Play';
+  String get actionPlay => 'Пусни';
 
   @override
-  String get actionPause => 'Pause';
+  String get actionPause => 'Пауза';
 
   @override
-  String get actionStop => 'Stop';
+  String get actionStop => 'Спри';
 
   @override
   String playStationHint(String station) {
-    return 'Play $station';
+    return 'Пусни $station';
   }
 
   @override
-  String get stateConnecting => 'Connecting…';
+  String get stateConnecting => 'Свързване…';
 
   @override
-  String get stateBuffering => 'Buffering…';
+  String get stateBuffering => 'Буфериране…';
 
   @override
-  String get stateReconnecting => 'Reconnecting…';
+  String get stateReconnecting => 'Повторно свързване…';
 
   @override
-  String get stateInterrupted => 'Interrupted';
+  String get stateInterrupted => 'Прекъснато';
 
   @override
-  String get statePaused => 'Paused';
+  String get statePaused => 'На пауза';
 
   @override
-  String get stateError => 'Error';
+  String get stateError => 'Грешка';
 
   @override
-  String get notificationChannelName => 'Playback';
+  String get notificationChannelName => 'Възпроизвеждане';
 
   @override
   String miniPlayerRegionLabel(String station) {
-    return 'Now playing: $station';
+    return 'Сега звучи: $station';
   }
 }
