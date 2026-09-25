@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../features/catalog/application/catalog_providers.dart';
 import '../features/playback/application/playback_providers.dart';
 import '../features/playback/domain/play_context.dart';
+import '../features/playback/presentation/debug_panel.dart';
 import '../features/playback/presentation/mini_player.dart';
 import '../l10n/app_localizations.dart';
 
@@ -20,7 +21,20 @@ class HomeScreen extends ConsumerWidget {
     final stations = ref.watch(stationDirectoryProvider).all;
     final ids = [for (final s in stations) s.id];
     return Scaffold(
-      appBar: AppBar(title: Text(l.stationListTitle)),
+      appBar: AppBar(
+        title: Text(l.stationListTitle),
+        actions: [
+          // Debug and profile builds only (D-07, T-11-01): showDebugTools
+          // defaults to !kReleaseMode, a compile-time constant, so release
+          // AOT drops this branch and the panel with it.
+          if (showDebugTools)
+            IconButton(
+              icon: const Icon(Icons.bug_report),
+              tooltip: 'Debug',
+              onPressed: () => _openDebugPanel(context),
+            ),
+        ],
+      ),
       body: ListView.builder(
         itemCount: stations.length,
         itemBuilder: (context, index) {
@@ -46,4 +60,15 @@ class HomeScreen extends ConsumerWidget {
       bottomNavigationBar: const MiniPlayer(),
     );
   }
+
+  static Future<void> _openDebugPanel(BuildContext context) =>
+      showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        showDragHandle: true,
+        builder: (_) => const FractionallySizedBox(
+          heightFactor: 0.85,
+          child: SafeArea(top: false, child: DebugPanel()),
+        ),
+      );
 }
