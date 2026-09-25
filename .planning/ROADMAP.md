@@ -33,17 +33,22 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. After a Wi-Fi to 4G switch, an airplane-mode toggle or a stream drop, audio comes back at the live edge within about 10 s without the user doing anything. If the primary stream is dead, a fallback stream plays. Retries stop after a bounded budget instead of draining the battery.
   4. A phone call with the screen off pauses the radio, and it resumes after hang-up. Navigation prompts duck the audio. Unplugging headphones or disconnecting Bluetooth pauses it. Resuming after a 5-minute user pause plays live audio, not stale buffer. Nothing restarts playback that the user paused or stopped.
   5. The app installs on Android 7.0 (minSdk 24) through current Android (target 36). Every PR runs `flutter analyze` and `flutter test` in CI, version tags produce a signed release AAB, and no key or secret exists in the public repo. The first-launch date is stored on the very first run, and no tracking SDK is present.
-**Plans**: 8 plans (5 waves)
+**Plans**: 13 plans (8 waves)
 
 Plans:
-- [ ] 01-01-PLAN.md — Walking skeleton: tap БГ Радио → hear it screen-off in a release build (tracer, blocking owner gate); BG/EN state labels, accessible mini-player, first-launch date
-- [ ] 01-02-PLAN.md — CI on every PR (analyze, dart analyze, test, codegen staleness, release-manifest checks) + signed AAB/APK on tags; owner keystore + secrets (blocking)
-- [ ] 01-03-PLAN.md — .pls/.m3u and extension-less HLS stations play (StreamResolver); app-owned traffic HTTPS-only
-- [ ] 01-04-PLAN.md — Owner-verified six-station lineup with ordered fallback streams + debug-only test stations (D-02 blocking decision)
-- [ ] 01-05-PLAN.md — Correct Cyrillic now-playing (cp1251 repair, sanitising) that never goes stale
-- [ ] 01-06-PLAN.md — Recovers on its own: fallback rotation, live-edge reconnect with backoff, RetryBudget presets, next/previous API
-- [ ] 01-07-PLAN.md — Calls, ducking, unplug and other media apps handled like a radio; Wi-Fi lock; Stop leaves nothing running
-- [ ] 01-08-PLAN.md — Debug/profile-only diagnostics panel with a per-stream switcher
+- [ ] 01-01-PLAN.md — Walking skeleton tracer: tap БГ Радио → hear it screen-off in a release build with notification, lock-screen and headset controls (blocking owner gate)
+- [ ] 01-02-PLAN.md — CI on every PR (analyze, dart analyze, test, codegen staleness, release-manifest checks) + signed AAB/APK on tags + explicit SDK levels; owner keystore + secrets (blocking)
+- [ ] 01-03-PLAN.md — BG/EN UI via gen-l10n and an accessible mini-player with state labels
+- [ ] 01-04-PLAN.md — .pls/.m3u and extension-less HLS stations play (StreamResolver); app-owned traffic HTTPS-only
+- [ ] 01-05-PLAN.md — Owner-verified six-station lineup with ordered fallback streams + debug-only test stations (D-02 blocking decision)
+- [ ] 01-06-PLAN.md — cp1251 repair, sanitiser and ICY title parser (pure, golden-tested)
+- [ ] 01-07-PLAN.md — Localised state text, icon and channel name on the notification; FGS-table and media-ID tests; first-launch date
+- [ ] 01-08-PLAN.md — Correct Cyrillic now-playing on notification, lock screen and mini-player, never stale
+- [ ] 01-09-PLAN.md — Fallback rotation (two dead-on-arrival rounds), next/previous within the list, engine diagnostics
+- [ ] 01-10-PLAN.md — Drop/stall reconnect at the live edge with backoff and the RetryBudget presets (online budget)
+- [ ] 01-11-PLAN.md — Debug/profile-only diagnostics panel with a per-stream switcher
+- [ ] 01-12-PLAN.md — Wi-Fi↔4G and airplane-mode recovery, offline wait and offline budget (connectivity)
+- [ ] 01-13-PLAN.md — Calls, ducking, unplug and other media apps handled like a radio; Wi-Fi lock; Stop leaves nothing running
 **UI hint**: yes
 **Notes**: This is the heaviest phase. It holds the explicit playback state machine (including `Interrupted(transient)`), the FGS policy, the stall watchdog, reconnect with backoff and jitter, fallback rotation, the `.pls`/`.m3u` resolver, cp1251 repair, the Wi-Fi lock check, the `PlayContext`/next-prev engine API and the media-ID scheme. `/gsd-plan-phase 1` should run with research (strong flag). Record the unlisted FGS demo video as soon as background playback works, because Play needs it for the declaration in Phase 4. If the phase proves too big for one verified increment, split it with `/gsd-phase --insert` into a skeleton part and a resilience part.
 

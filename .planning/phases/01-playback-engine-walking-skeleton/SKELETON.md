@@ -5,14 +5,14 @@
 
 ## Capability Proven End-to-End
 
-A listener taps БГ Радио in the eRadioto station list on a physical Android phone. A **release** build plays it with the screen locked, and the listener can pause, resume at the live edge and stop it from the mini-player, the media notification, the lock screen and a headset. Proven by 01-01 Task 1 (the tracer, with a blocking owner gate).
+A listener taps БГ Радио in the eRadioto station list on a physical Android phone. A **release** build plays it with the screen locked, and the listener can pause, resume at the live edge and stop it from the media notification, the lock screen and a headset. Proven by plan 01-01, which holds only the tracer task and a blocking owner gate. The in-app mini-player and the BG/EN strings follow in 01-03, and the explicit SDK levels and CI in 01-02.
 
 ## Architectural Decisions
 
 | Decision | Choice | Rationale |
 |---|---|---|
 | Framework | Flutter 3.47.5 / Dart 3.13.4, Android only in v1; `flutter create --org bg.izk --project-name radio` → package `bg.izk.radio` | Pinned stack (CLAUDE.md). One codebase keeps iOS/CarPlay open later. The package id is owner-decided and permanent once published. |
-| SDK levels | minSdk 24, targetSdk 36, compileSdk 36, written explicitly in `android/app/build.gradle.kts`; AGP 9.1 / Gradle 9.3.1 / Kotlin 2.4 / JDK 17 (template defaults) | 24 is the floor for Flutter 3.47 and audio_session. 36 has been mandatory on Play since 2026-08-31. |
+| SDK levels | minSdk 24, targetSdk 36, compileSdk 36. The tracer (01-01) builds with the Flutter 3.47.5 template defaults, which are these values; 01-02 writes them explicitly in `android/app/build.gradle.kts`. AGP 9.1 / Gradle 9.3.1 / Kotlin 2.4 / JDK 17 (template defaults) | 24 is the floor for Flutter 3.47 and audio_session. 36 has been mandatory on Play since 2026-08-31. |
 | Audio stack | just_audio 0.10.6 (Media3 ExoPlayer) + audio_service 0.18.19 (FGS, MediaSession, notification, media buttons) + audio_session 0.2.4 (focus, becoming-noisy) | The only mature permissively licensed stack with a MediaBrowserService (Android Auto in v1.1). |
 | Engine seam | `AudioEngine` facade (domain terms) → `RadioAudioHandler` (BaseAudioHandler, command executor) → `StreamPlayer` port (`JustAudioStreamPlayer`), plus `AudioSessionPort`, `ConnectivityPort` and `WifiLockPort` | The engine can be swapped (e.g. native Media3) without touching the UI. The fakes make the core logic unit-testable. |
 | Import boundary | Only `lib/features/playback/engine/**` and `lib/app/bootstrap.dart` may import just_audio, audio_service, audio_session or connectivity_plus; enforced by a CI grep | Keeps the swap cost at one folder plus one line in bootstrap. |
@@ -26,7 +26,7 @@ A listener taps БГ Радио in the eRadioto station list on a physical Andro
 | State management | Riverpod 3 with codegen. Providers are read-only mirrors of engine streams. `ProviderContainer(retry: null)` shared with the handler via `UncontrolledProviderScope` | Reconnect logic lives only in the engine (no provider auto-retry). |
 | Data layer | Phase 1 has no database. Stations are Dart constants (`phase1_stations.dart`, debug list gated by `!kReleaseMode`). One local write/read: `first_launch_at` (UTC ISO-8601, write-once) via `SharedPreferencesAsync` | The persistence proof for the skeleton is the first-launch date. drift and the remote catalogue arrive in Phase 2/3. |
 | Auth | None: no accounts in v1 | Out of scope (REQUIREMENTS "Out of Scope"). |
-| Localisation | gen-l10n, BG + EN ARB in `lib/l10n/`, generated code committed; `bg` device → Bulgarian, otherwise English; `EngineStrings` below the UI | D-08; the notification needs strings without a BuildContext. |
+| Localisation | gen-l10n, BG + EN ARB in `lib/l10n/`, generated code committed; `bg` device → Bulgarian, otherwise English (01-03); `EngineStrings` below the UI for the notification (01-07) | D-08; the notification needs strings without a BuildContext. |
 | Deployment | GitHub Actions: `ci.yml` (PR/main: build_runner staleness, analyze, dart analyze, test, deny-list, import boundary, release-manifest checks); `release.yml` (v* tags + dispatch: signed AAB + APK artifacts). Local: `flutter run --release` | D-15. No secrets on PRs; upload key only (Play App Signing in Phase 4). |
 | Directory layout | Feature-first: `lib/app/` (bootstrap, app, home), `lib/core/{network,text,settings}`, `lib/features/catalog/{domain,data,application}`, `lib/features/playback/{domain,engine,application,presentation}`; `test/` mirrors `lib/` | ARCHITECTURE "Recommended Project Structure". Later phases add features without moving the engine. |
 | Codegen | freezed + riverpod_generator + gen-l10n outputs committed; CI fails on stale output | D-17. |
@@ -34,9 +34,9 @@ A listener taps БГ Радио in the eRadioto station list on a physical Andro
 ## Stack Touched in Phase 1
 
 - [x] Project scaffold: framework, build, lint (flutter_lints + riverpod_lint via `dart analyze`), test runner (flutter_test + fake_async + mocktail) — 01-01
-- [x] Routing: a single home route (station list + mini-player). go_router with the shell and persistent mini-player arrives in Phase 2 — 01-01
-- [x] Persistence: one real write and one real read (`first_launch_at` via SharedPreferencesAsync) — 01-01 Task 2
-- [x] UI: station tile tap → `AudioEngine.play` → audible playback; the mini-player's play/pause/stop — 01-01 Task 1
+- [x] Routing: a single home route (the station list; the mini-player joins it in 01-03). go_router with the shell and persistent mini-player arrives in Phase 2 — 01-01
+- [x] Persistence: one real write and one real read (`first_launch_at` via SharedPreferencesAsync) — 01-07 Task 2
+- [x] UI: station tile tap → `AudioEngine.play` → audible playback, controlled from the notification, lock screen and headset — 01-01; the mini-player's play/pause/stop — 01-03
 - [x] Deployment: signed release AAB/APK from CI on tags; documented local full-stack run `flutter run --release` on a physical phone — 01-02
 
 ## Out of Scope (Deferred to Later Slices)
