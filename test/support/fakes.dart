@@ -303,3 +303,36 @@ class FakeAudioSessionPort implements AudioSessionPort {
     log.add('release');
   }
 }
+
+/// [ConnectivityPort] with a settable online value and scripted changes.
+/// Changes are delivered synchronously.
+class FakeConnectivityPort implements ConnectivityPort {
+  FakeConnectivityPort({this.online = true});
+
+  /// What [isOnline] answers.
+  bool online;
+
+  /// How many times [isOnline] was asked.
+  int isOnlineCalls = 0;
+
+  final _changes = StreamController<ConnectivityChange>.broadcast(sync: true);
+
+  @override
+  Stream<ConnectivityChange> get changes => _changes.stream;
+
+  @override
+  Future<bool> isOnline() async {
+    isOnlineCalls++;
+    return online;
+  }
+
+  /// Emits a change and makes [isOnline] answer [online] from now on.
+  void emit({required bool online, bool networkChanged = false}) {
+    this.online = online;
+    _changes.add(
+      ConnectivityChange(online: online, networkChanged: networkChanged),
+    );
+  }
+
+  Future<void> close() => _changes.close();
+}

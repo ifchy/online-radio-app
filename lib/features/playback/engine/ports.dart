@@ -100,6 +100,48 @@ abstract interface class AudioSessionPort {
   Future<void> release();
 }
 
+/// A debounced network-state change (RESEARCH "Transition rules",
+/// ARCHITECTURE Pattern 4).
+final class ConnectivityChange {
+  const ConnectivityChange({
+    required this.online,
+    required this.networkChanged,
+  });
+
+  /// Whether any network is up.
+  final bool online;
+
+  /// Whether the device moved to a different set of networks than the last
+  /// one it was online on (for example Wi-Fi to mobile data). Always false
+  /// when [online] is false.
+  final bool networkChanged;
+
+  @override
+  bool operator ==(Object other) =>
+      other is ConnectivityChange &&
+      other.online == online &&
+      other.networkChanged == networkChanged;
+
+  @override
+  int get hashCode => Object.hash(online, networkChanged);
+
+  @override
+  String toString() =>
+      'ConnectivityChange(${online ? 'online' : 'offline'}'
+      '${networkChanged ? ', network changed' : ''})';
+}
+
+/// Network state as the handler needs it. Until told otherwise the network
+/// counts as online.
+abstract interface class ConnectivityPort {
+  /// Debounced changes: emitted only when the online flag or the network set
+  /// differs from the last state seen (by [isOnline] or an earlier change).
+  Stream<ConnectivityChange> get changes;
+
+  /// Whether any network is up now.
+  Future<bool> isOnline();
+}
+
 /// Turns a catalogue [StationStream] into directly playable endpoints.
 ///
 /// Neither just_audio nor ExoPlayer parses `.pls`/`.m3u` wrappers, and the
