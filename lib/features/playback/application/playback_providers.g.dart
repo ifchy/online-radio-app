@@ -180,3 +180,52 @@ final class NowPlayingProvider
 }
 
 String _$nowPlayingHash() => r'1ab13cedff5671a9a15ce8923c62feabfe029751';
+
+/// Read-only mirror of the engine's diagnostics, for the debug panel (D-07).
+/// In memory only: nothing reads this provider to store or send it.
+
+@ProviderFor(diagnostics)
+final diagnosticsProvider = DiagnosticsProvider._();
+
+/// Read-only mirror of the engine's diagnostics, for the debug panel (D-07).
+/// In memory only: nothing reads this provider to store or send it.
+
+final class DiagnosticsProvider
+    extends
+        $FunctionalProvider<
+          AsyncValue<EngineDiagnostics>,
+          EngineDiagnostics,
+          Stream<EngineDiagnostics>
+        >
+    with
+        $FutureModifier<EngineDiagnostics>,
+        $StreamProvider<EngineDiagnostics> {
+  /// Read-only mirror of the engine's diagnostics, for the debug panel (D-07).
+  /// In memory only: nothing reads this provider to store or send it.
+  DiagnosticsProvider._()
+    : super(
+        from: null,
+        argument: null,
+        retry: null,
+        name: r'diagnosticsProvider',
+        isAutoDispose: false,
+        dependencies: null,
+        $allTransitiveDependencies: null,
+      );
+
+  @override
+  String debugGetCreateSourceHash() => _$diagnosticsHash();
+
+  @$internal
+  @override
+  $StreamProviderElement<EngineDiagnostics> $createElement(
+    $ProviderPointer pointer,
+  ) => $StreamProviderElement(pointer);
+
+  @override
+  Stream<EngineDiagnostics> create(Ref ref) {
+    return diagnostics(ref);
+  }
+}
+
+String _$diagnosticsHash() => r'b42783c866970f0bb82dae75992dc9bf74187587';

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -9,7 +10,9 @@ import '../l10n/app_localizations.dart';
 
 /// The Phase 1 station list with the bottom mini-player (D-06).
 class HomeScreen extends ConsumerWidget {
-  const HomeScreen({super.key});
+  const HomeScreen({super.key, this.showDebugTools = !kReleaseMode});
+
+  final bool showDebugTools;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
