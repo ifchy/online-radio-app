@@ -40,9 +40,23 @@ final class EngineTimings {
   final Duration stablePlayingReset;
 }
 
-/// The timers the handler runs for the state machine. Plans 01-10 and 01-12
-/// add more kinds.
-enum TimerKind { connect, stall, backoff, stablePlaying, budget }
+/// The timers the handler runs for the state machine.
+enum TimerKind {
+  /// One connect attempt ([EngineTimings.connectTimeout]).
+  connect,
+
+  /// The stall watchdog while Buffering ([EngineTimings.stallTimeout]).
+  stall,
+
+  /// The wait before a reconnect retry ([ReconnectPolicy.delayFor]).
+  backoff,
+
+  /// Stable playback after an outage ([EngineTimings.stablePlayingReset]).
+  stablePlaying,
+
+  /// What is left of the retry budget ([RetryBudgetClock.remaining]).
+  budget,
+}
 
 /// Everything the reducer knows. Immutable; [copyWith] builds the next one.
 final class EngineState {
@@ -495,25 +509,40 @@ final class Transition {
   final List<EngineCommand> commands;
 }
 
-/// The reducer. [transition] is pure: the same state, event and time always
-/// give the same result, and it never performs a side effect itself.
+/// The reducer. [transition] is pure: it never performs a side effect, and
+/// the same state, event and time always give the same result, except for
+/// the jitter the [policy] draws from its injected `Random` (tests seed it or
+/// set its jitter to 0).
 ///
-/// Rows (RESEARCH Pattern 2, ARCHITECTURE Pattern 3):
-/// - UserPlay from any state: a new session at the live edge.
+/// Rows (RESEARCH Pattern 2 and "Transition rules", ARCHITECTURE Patterns 3
+/// and 4):
+/// - UserPlay from any state: a new session at the live edge; every timer
+///   of the old one is cancelled.
 /// - Connecting: a failure of the current attempt (resolve failure, player
 ///   failure, a load that completes at once, or the connect timer) moves to
 ///   the next resolved candidate, then to the next stream. When rotation
-///   comes back to the start stream a round ends; a station that never
-///   played is given up after [EngineTimings.maxDeadOnArrivalRounds] rounds.
+///   comes back to where it started a round ends. A station that never
+///   played is given up after [EngineTimings.maxDeadOnArrivalRounds] rounds;
+///   one that played goes to Reconnecting.
 /// - Connecting + ready and playing: Playing, with time-to-audio recorded.
-/// - Playing <-> Buffering on the player's buffering and ready states.
-/// - Playing/Buffering + a failure or `completed`: Error(streamUnreachable).
-///   Plan 01-10 replaces this row with Reconnecting.
+/// - Playing + buffering: Buffering with the stall watchdog
+///   ([EngineTimings.stallTimeout]); ready again cancels it. When it fires
+///   the stream is reloaded through Reconnecting(attempt 0).
+/// - Playing/Buffering + a failure or `completed`: Reconnecting (a live
+///   stream never ends; the server or the network dropped us).
+/// - Reconnecting + its backoff timer: a retry, Connecting from the stream
+///   that last worked. A retry round that fails goes back to Reconnecting
+///   with the next, longer backoff ([ReconnectPolicy.delayFor]).
+/// - The retry budget ([RetryBudgetClock], D-10) runs while an outage is
+///   failing; when it is used up the station ends in PlaybackError with
+///   everything released. [EngineTimings.stablePlayingReset] of stable
+///   Playing ends the outage and resets the backoff.
 /// - UserPause/UserStop from an active state: Paused/Idle, everything
-///   stopped and focus released.
+///   stopped, every timer cancelled and focus released.
 /// - Guards (PLAY-10): an event stamped with an older generation changes
 ///   nothing, and only UserPlay and UserResume start playback from Paused,
-///   Idle or Error.
+///   Idle or Error. Reconnecting + its timer is the only path that starts
+///   playback without a user command (01-12 adds connectivity, 01-13 focus).
 class PlaybackStateMachine {
   const PlaybackStateMachine({
     required this.policy,
@@ -523,34 +552,36 @@ class PlaybackStateMachine {
   final ReconnectPolicy policy;
   final EngineTimings timings;
 
-  Transition transition(EngineState state, EngineEvent event, DateTime now) =>
-      switch (event) {
-        UserPlay(:final station, :final context, :final startStreamIndex) =>
-          _start(
-            state,
-            station,
-            context: context,
-            startStreamIndex: startStreamIndex,
-            now: now,
-          ),
-        UserResume() => _resume(state, now),
-        UserPause() => _pause(state),
-        UserStop() => _stop(state),
-        Resolved() => _resolved(state, event),
-        ResolveFailed(:final generation, :final reason) =>
-          generation == state.generation && state.status is Connecting
-              ? _nextStream(state, formatFailure: _isFormatFailure(reason))
-              : _unchanged(state),
-        PlayerStateChanged() => _playerStateChanged(state, event, now),
-        PlayerFailed(:final generation) => _playerFailed(state, generation),
-        TimerFired(:final kind, :final generation) =>
-          kind == TimerKind.connect &&
-                  generation == state.generation &&
-                  state.status is Connecting
-              ? _nextCandidate(state, formatFailure: false)
-              : _unchanged(state),
-        SetRetryBudget() => _unchanged(state),
-      };
+  Transition transition(
+    EngineState state,
+    EngineEvent event,
+    DateTime now,
+  ) => switch (event) {
+    UserPlay(:final station, :final context, :final startStreamIndex) => _start(
+      state,
+      station,
+      context: context,
+      startStreamIndex: startStreamIndex,
+      now: now,
+    ),
+    UserResume() => _resume(state, now),
+    UserPause() => _pause(state),
+    UserStop() => _stop(state),
+    Resolved() => _resolved(state, event, now),
+    ResolveFailed(:final generation, :final reason) =>
+      generation == state.generation && state.status is Connecting
+          ? _nextStream(state, now, formatFailure: _isFormatFailure(reason))
+          : _unchanged(state),
+    PlayerStateChanged() => _playerStateChanged(state, event, now),
+    PlayerFailed(:final generation) => _playerFailed(state, generation, now),
+    TimerFired(:final kind, :final generation) => _timerFired(
+      state,
+      kind,
+      generation,
+      now,
+    ),
+    SetRetryBudget(:final preset) => _setRetryBudget(state, preset, now),
+  };
 
   static Transition _unchanged(EngineState state) =>
       Transition(state, const []);
@@ -580,10 +611,27 @@ class PlaybackStateMachine {
         _ => false,
       };
 
-  /// A new session on [station]: stop whatever plays, clear now-playing and
-  /// resolve the start stream under a new generation. The handler publishes
-  /// Connecting (playing: true, loading) before running these commands, so
-  /// the foreground service starts from the user action (Pitfall G).
+  /// Whether playback came back from an outage that has not yet been stable
+  /// for [EngineTimings.stablePlayingReset].
+  static bool _recovering(EngineState state) =>
+      state.attempt > 0 || state.budget.active;
+
+  /// Where a reconnect retry starts, and where its round ends: the stream
+  /// that last worked, else the stream the session started at.
+  static int _reconnectStart(EngineState state) {
+    final last = state.lastWorkingStreamIndex;
+    final count = state.station?.streams.length ?? 0;
+    return last != null && last >= 0 && last < count
+        ? last
+        : state.startStreamIndex;
+  }
+
+  /// A new session on [station]: cancel the old session's timers, stop
+  /// whatever plays, clear now-playing and resolve the start stream under a
+  /// new generation. The handler publishes Connecting (playing: true,
+  /// loading) before running these commands, so the foreground service
+  /// starts from the user action (Pitfall G). The retry budget preset is
+  /// kept; its clock starts afresh.
   Transition _start(
     EngineState state,
     Station station, {
@@ -611,8 +659,10 @@ class PlaybackStateMachine {
         lastWorkingStreamIndex: lastWorkingStreamIndex,
         connectStartedAt: now,
         startStreamIndex: start,
+        budget: state.budget.reset(),
       ),
       [
+        const CancelAllTimers(),
         const StopTransport(),
         const ClearNowPlaying(),
         StartTimer(TimerKind.connect, timings.connectTimeout, generation),
@@ -644,6 +694,9 @@ class PlaybackStateMachine {
     _ => _unchanged(state),
   };
 
+  /// Pause wins over everything in flight, including a reconnect: the
+  /// backoff, stall, stable and budget timers are cancelled and the outage
+  /// is forgotten (PLAY-10).
   Transition _pause(EngineState state) {
     final station = state.station;
     if (station == null || !_isActive(state.status)) return _unchanged(state);
@@ -652,6 +705,8 @@ class PlaybackStateMachine {
         status: PlaybackStatus.paused(station: station),
         generation: state.generation + 1,
         connectStartedAt: null,
+        budget: state.budget.reset(),
+        attempt: 0,
       ),
       _stopEverything,
     );
@@ -665,18 +720,20 @@ class PlaybackStateMachine {
       candidates: const [],
       candidateIndex: 0,
       connectStartedAt: null,
+      budget: state.budget.reset(),
+      attempt: 0,
     ),
     _stopEverything,
   );
 
-  Transition _resolved(EngineState state, Resolved event) {
+  Transition _resolved(EngineState state, Resolved event, DateTime now) {
     if (event.generation != state.generation || state.status is! Connecting) {
       return _unchanged(state);
     }
     // The resolver never returns an empty list; if one ever did, nothing in
     // this stream is playable.
     if (event.candidates.isEmpty) {
-      return _nextStream(state, formatFailure: true);
+      return _nextStream(state, now, formatFailure: true);
     }
     return Transition(
       state.copyWith(
@@ -696,6 +753,12 @@ class PlaybackStateMachine {
     final readyAndPlaying =
         event.state == PlayerProcessingState.ready && event.playing;
     final completed = event.state == PlayerProcessingState.completed;
+    final recovering = _recovering(state);
+    final stableTimer = StartTimer(
+      TimerKind.stablePlaying,
+      timings.stablePlayingReset,
+      state.generation,
+    );
     switch (state.status) {
       case Connecting(:final station, :final streamIndex) when readyAndPlaying:
         final startedAt = state.connectStartedAt;
@@ -708,15 +771,22 @@ class PlaybackStateMachine {
             everPlayed: true,
             lastWorkingStreamIndex: streamIndex,
             connectStartedAt: null,
+            // Back from an outage: playing time does not count against the
+            // budget, but the outage stays open until playback is stable.
+            budget: state.budget.recovered(now),
           ),
           [
             const CancelTimer(TimerKind.connect),
             if (startedAt != null) RecordTimeToAudio(now.difference(startedAt)),
+            if (recovering) ...[
+              const CancelTimer(TimerKind.budget),
+              stableTimer,
+            ],
           ],
         );
       case Connecting() when completed:
         // A load that ends before any audio is as dead as a failed one.
-        return _nextCandidate(state, formatFailure: false);
+        return _nextCandidate(state, now, formatFailure: false);
       case Playing(:final station, :final streamIndex)
           when event.state == PlayerProcessingState.buffering:
         return Transition(
@@ -726,7 +796,10 @@ class PlaybackStateMachine {
               streamIndex: streamIndex,
             ),
           ),
-          const [],
+          [
+            if (recovering) const CancelTimer(TimerKind.stablePlaying),
+            StartTimer(TimerKind.stall, timings.stallTimeout, state.generation),
+          ],
         );
       case Buffering(:final station, :final streamIndex) when readyAndPlaying:
         return Transition(
@@ -736,32 +809,67 @@ class PlaybackStateMachine {
               streamIndex: streamIndex,
             ),
           ),
-          const [],
+          [const CancelTimer(TimerKind.stall), if (recovering) stableTimer],
         );
       case Playing() || Buffering() when completed:
-        // A live stream never ends: the server dropped us (Pitfall 2).
-        return _toError(state, PlaybackErrorKind.streamUnreachable);
+        // A live stream never ends: the server dropped us (Pitfall 2,
+        // Anti-Pattern 4).
+        return _reconnect(state, now, failed: state.currentStream);
       case _:
         return _unchanged(state);
     }
   }
 
-  Transition _playerFailed(EngineState state, int generation) {
+  Transition _playerFailed(EngineState state, int generation, DateTime now) {
     if (generation != state.generation) return _unchanged(state);
     return switch (state.status) {
-      Connecting() => _nextCandidate(state, formatFailure: false),
+      Connecting() => _nextCandidate(state, now, formatFailure: false),
       Playing() ||
-      Buffering() => _toError(state, PlaybackErrorKind.streamUnreachable),
+      Buffering() => _reconnect(state, now, failed: state.currentStream),
+      _ => _unchanged(state),
+    };
+  }
+
+  Transition _timerFired(
+    EngineState state,
+    TimerKind kind,
+    int generation,
+    DateTime now,
+  ) {
+    // The budget timer spans every retry of an outage (each retry is a new
+    // generation), so its guard is the clock itself: it acts only while an
+    // outage is failing. Pause, stop, a new session and an error all reset
+    // the clock.
+    if (kind == TimerKind.budget) return _budgetTimer(state, now);
+    if (generation != state.generation) return _unchanged(state);
+    return switch ((kind, state.status)) {
+      (TimerKind.connect, Connecting()) => _nextCandidate(
+        state,
+        now,
+        formatFailure: false,
+      ),
+      // The stall watchdog: ExoPlayer's own timeouts are far slower than
+      // the ~10 s recovery target (ARCHITECTURE Pattern 4).
+      (TimerKind.stall, Buffering()) => _reconnect(state, now),
+      (TimerKind.backoff, Reconnecting()) => _retry(state, now),
+      (TimerKind.stablePlaying, Playing()) => Transition(
+        state.copyWith(budget: state.budget.reset(), attempt: 0),
+        const [],
+      ),
       _ => _unchanged(state),
     };
   }
 
   /// The current candidate failed: try the stream's next resolved candidate,
   /// or else the next stream.
-  Transition _nextCandidate(EngineState state, {required bool formatFailure}) {
+  Transition _nextCandidate(
+    EngineState state,
+    DateTime now, {
+    required bool formatFailure,
+  }) {
     final next = state.candidateIndex + 1;
     if (next >= state.candidates.length) {
-      return _nextStream(state, formatFailure: formatFailure);
+      return _nextStream(state, now, formatFailure: formatFailure);
     }
     final generation = state.generation + 1;
     return Transition(
@@ -778,25 +886,31 @@ class PlaybackStateMachine {
   }
 
   /// The current stream failed: invalidate its resolution and resolve the
-  /// next one. When rotation reaches the start stream again a round ends; a
-  /// station that never played is given up after the last allowed round
-  /// (PLAY-08, T-09-02).
-  Transition _nextStream(EngineState state, {required bool formatFailure}) {
+  /// next one. When rotation reaches its first stream again a round ends: a
+  /// station that played before reconnects with backoff (PLAY-07); one that
+  /// never played is given up after the last allowed round (PLAY-08,
+  /// T-09-02).
+  Transition _nextStream(
+    EngineState state,
+    DateTime now, {
+    required bool formatFailure,
+  }) {
     final station = state.station!;
     final failed = station.streams[state.streamIndex];
     final onlyFormatFailures = state.onlyFormatFailures && formatFailure;
     final nextIndex = (state.streamIndex + 1) % station.streams.length;
-    final roundEnds = nextIndex == state.startStreamIndex;
+    final roundStart = state.everPlayed
+        ? _reconnectStart(state)
+        : state.startStreamIndex;
+    final roundEnds = nextIndex == roundStart;
+    if (roundEnds && state.everPlayed) {
+      return _reconnect(state, now, failed: failed);
+    }
     final nextRound = roundEnds ? state.round + 1 : state.round;
-    if (roundEnds &&
-        (state.everPlayed || nextRound >= timings.maxDeadOnArrivalRounds)) {
-      // A station that played before is not dead on arrival: plan 01-10
-      // turns this into Reconnecting.
+    if (roundEnds && nextRound >= timings.maxDeadOnArrivalRounds) {
       return _toError(
         state.copyWith(onlyFormatFailures: onlyFormatFailures),
-        state.everPlayed
-            ? PlaybackErrorKind.streamUnreachable
-            : onlyFormatFailures
+        onlyFormatFailures
             ? PlaybackErrorKind.unsupportedFormat
             : PlaybackErrorKind.allStreamsFailed,
       );
@@ -825,6 +939,125 @@ class PlaybackStateMachine {
     );
   }
 
+  /// Playback dropped or a retry round failed: wait the backoff for this
+  /// attempt, then retry at the live edge (PLAY-07, PLAY-11).
+  ///
+  /// The status keeps `playing: true` so the foreground service stays up
+  /// while recovering (Pitfall 1). The budget clock runs from the first
+  /// failure of the outage; the budget timer is armed for what is left, and
+  /// a budget already used up gives up at once. [failed] is the stream whose
+  /// resolution is dropped (a stall keeps it: the URL was fine).
+  Transition _reconnect(
+    EngineState state,
+    DateTime now, {
+    StationStream? failed,
+  }) {
+    final budget = state.budget.start(now, online: state.budget.online);
+    final failing = state.copyWith(budget: budget);
+    final exhaustion = budget.exhausted(now);
+    if (exhaustion != null) return _giveUp(failing, exhaustion);
+    final delay = policy.delayFor(state.attempt);
+    final generation = state.generation + 1;
+    return Transition(
+      failing.copyWith(
+        status: PlaybackStatus.reconnecting(
+          station: state.station!,
+          attempt: state.attempt,
+          nextAttemptAt: now.add(delay),
+        ),
+        generation: generation,
+        candidates: const [],
+        candidateIndex: 0,
+        connectStartedAt: null,
+      ),
+      [
+        const CancelAllTimers(),
+        const ClearNowPlaying(),
+        const StopTransport(),
+        if (failed != null) InvalidateResolution(failed),
+        StartTimer(TimerKind.backoff, delay, generation),
+        StartTimer(TimerKind.budget, budget.remaining(now), generation),
+      ],
+    );
+  }
+
+  /// The backoff ran out: a retry round, from the stream that last worked,
+  /// as a fresh load at the live edge under a new generation.
+  Transition _retry(EngineState state, DateTime now) {
+    final exhaustion = state.budget.exhausted(now);
+    if (exhaustion != null) return _giveUp(state, exhaustion);
+    final station = state.station!;
+    final start = _reconnectStart(state);
+    final generation = state.generation + 1;
+    return Transition(
+      state.copyWith(
+        status: PlaybackStatus.connecting(
+          station: station,
+          streamIndex: start,
+          round: 0,
+        ),
+        generation: generation,
+        streamIndex: start,
+        candidateIndex: 0,
+        round: 0,
+        candidates: const [],
+        attempt: state.attempt + 1,
+      ),
+      [
+        StartTimer(TimerKind.connect, timings.connectTimeout, generation),
+        Resolve(station.streams[start], generation),
+      ],
+    );
+  }
+
+  /// The budget timer: gives up when the budget is used up, or re-arms for
+  /// the rest if it fired early. Outside a failing outage it does nothing.
+  Transition _budgetTimer(EngineState state, DateTime now) {
+    final inOutage =
+        state.budget.running &&
+        (state.status is Reconnecting || state.status is Connecting);
+    if (!inOutage) return _unchanged(state);
+    final exhaustion = state.budget.exhausted(now);
+    if (exhaustion != null) return _giveUp(state, exhaustion);
+    return Transition(state, [
+      StartTimer(
+        TimerKind.budget,
+        state.budget.remaining(now),
+        state.generation,
+      ),
+    ]);
+  }
+
+  /// The one engine-level reconnect setting (D-10). It applies to the
+  /// outage in progress too: the budget timer is re-armed for what is left
+  /// under the new limits (at once when that is nothing).
+  Transition _setRetryBudget(
+    EngineState state,
+    RetryBudgetPreset preset,
+    DateTime now,
+  ) {
+    final next = state.copyWith(budget: state.budget.withPreset(preset));
+    final inOutage =
+        next.budget.running &&
+        (state.status is Reconnecting || state.status is Connecting);
+    return Transition(next, [
+      if (inOutage)
+        StartTimer(
+          TimerKind.budget,
+          next.budget.remaining(now),
+          state.generation,
+        ),
+    ]);
+  }
+
+  /// The retry budget is used up: the station ends in an error with
+  /// everything released, so the foreground service goes (T-10-01).
+  Transition _giveUp(EngineState state, BudgetExhaustion exhaustion) =>
+      _toError(state, switch (exhaustion) {
+        BudgetExhaustion.online => PlaybackErrorKind.streamUnreachable,
+        BudgetExhaustion.offline => PlaybackErrorKind.offline,
+      });
+
   /// Ends the session in [kind]: every timer cancelled, the failed stream's
   /// resolution dropped (the URL may be stale), the transport stopped and
   /// focus released, so the foreground service goes (T-09-02).
@@ -835,6 +1068,8 @@ class PlaybackStateMachine {
         status: PlaybackStatus.error(station: state.station!, kind: kind),
         generation: state.generation + 1,
         connectStartedAt: null,
+        budget: state.budget.reset(),
+        attempt: 0,
       ),
       [
         const CancelAllTimers(),

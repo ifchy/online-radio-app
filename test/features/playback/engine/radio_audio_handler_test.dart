@@ -229,6 +229,9 @@ void main() {
         ),
       );
       await handler.playFromMediaId(_mediaId(njoy));
+      final statuses = <PlaybackStatus>[];
+      final sub = handler.statusStream.listen(statuses.add);
+      addTearDown(sub.cancel);
       final generation = player.lastLoad.generation;
       player.emitSnapshot(
         PlayerProcessingState.ready,
@@ -236,8 +239,12 @@ void main() {
         generation: generation,
       );
       player.emitFailure(generation: generation);
-      expect(handler.status, isA<Reconnecting>());
       await pumpEventQueue();
+      expect(statuses.map((s) => s.runtimeType), [
+        Playing,
+        Reconnecting,
+        Connecting,
+      ]);
       expect(resolver.invalidated, contains(njoy.streams.first));
       // The immediate retry is a fresh load of the same stream.
       expect(handler.status, isA<Connecting>());

@@ -43,12 +43,17 @@ import 'state_machine.dart';
 ///   (PLAY-10).
 /// - A dead or slow stream falls over to the next candidate and stream; a
 ///   station that never plays is given up after two rounds (PLAY-08).
+/// - A drop, a `completed` or 8 s of Buffering reconnects at the live edge
+///   with backoff, keeping `playing: true` so the foreground service stays;
+///   the station is given up when the retry budget (D-10) is used up
+///   (PLAY-07).
 /// - Focus is released on pause, stop and error (Pitfall F).
 /// - Now-playing (ICY) is cleared on every start, pause, stop and error, and
 ///   only titles from the current load after it is ready are shown
 ///   (Pitfall E).
 ///
-/// Reconnect after a drop and interruptions arrive in later plans.
+/// Network-change handling (01-12) and interruptions (01-13) arrive in
+/// later plans.
 class RadioAudioHandler extends BaseAudioHandler {
   RadioAudioHandler(
     this._player,
@@ -65,7 +70,10 @@ class RadioAudioHandler extends BaseAudioHandler {
          timings: timings,
        ),
        _clockOverride = clock,
-       _retryBudget = initialRetryBudget {
+       _state = EngineState(
+         status: const PlaybackStatus.idle(),
+         budget: RetryBudgetClock(preset: initialRetryBudget),
+       ) {
     _subscriptions.addAll([
       _player.snapshots.listen(_onSnapshot),
       _player.failures.listen(_onFailure),
@@ -90,7 +98,7 @@ class RadioAudioHandler extends BaseAudioHandler {
   final _diagnosticsController =
       StreamController<EngineDiagnostics>.broadcast();
 
-  EngineState _state = const EngineState.initial();
+  EngineState _state;
   Station? _station;
 
   /// Events waiting to be reduced, each with the completer its caller awaits.
@@ -122,6 +130,9 @@ class RadioAudioHandler extends BaseAudioHandler {
 
   final _recentEvents = ListQueue<DiagnosticEvent>();
   Duration? _lastTimeToAudio;
+
+  /// The backoff of the latest reconnect wait, for diagnostics.
+  Duration? _lastBackoff;
   EngineDiagnostics _diagnostics = const EngineDiagnostics.initial();
 
   /// The `playFromMediaId` extras key (an int) for the stream to start at,
@@ -133,14 +144,13 @@ class RadioAudioHandler extends BaseAudioHandler {
   PlayContext playContext = const PlayContext.single();
 
   /// The reconnect give-up policy in force (D-10).
-  RetryBudgetPreset get retryBudget => _retryBudget;
-  RetryBudgetPreset _retryBudget;
+  RetryBudgetPreset get retryBudget => _state.budget.preset;
 
   /// Sets the reconnect give-up policy (D-10), the engine-level setting
-  /// behind `AudioEngine.setRetryBudget`.
-  Future<void> setRetryBudget(RetryBudgetPreset preset) async {
-    _retryBudget = preset;
-  }
+  /// behind `AudioEngine.setRetryBudget`. It goes through the event queue
+  /// like every other input, so it also applies to an outage in progress.
+  Future<void> setRetryBudget(RetryBudgetPreset preset) =>
+      _dispatch(SetRetryBudget(preset));
 
   PlaybackStatus get status => _state.status;
   Stream<PlaybackStatus> get statusStream => _statusController.stream;
@@ -374,6 +384,10 @@ class RadioAudioHandler extends BaseAudioHandler {
             duration,
             () => unawaited(_dispatch(TimerFired(kind, generation))),
           );
+          if (kind == TimerKind.backoff) {
+            _lastBackoff = duration;
+            _emitDiagnostics();
+          }
         case CancelTimer(:final kind):
           _timers.remove(kind)?.cancel();
         case CancelAllTimers():
@@ -531,6 +545,8 @@ class RadioAudioHandler extends BaseAudioHandler {
       url: candidate?.uri,
       kind: candidate?.kind,
       round: s.round,
+      reconnectAttempt: s.attempt,
+      nextRetryDelay: s.status is Reconnecting ? _lastBackoff : null,
       lastTimeToAudio: _lastTimeToAudio,
       recentEvents: List.unmodifiable(_recentEvents),
     );
