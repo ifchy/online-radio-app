@@ -37,7 +37,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. A phone call with the screen off pauses the radio, and it resumes after hang-up. Navigation prompts duck the audio. Unplugging headphones or disconnecting Bluetooth pauses it. Resuming after a 5-minute user pause plays live audio, not stale buffer. Nothing restarts playback that the user paused or stopped.
   5. The app installs on Android 7.0 (minSdk 24) through current Android (target 36). Every PR runs `flutter analyze` and `flutter test` in CI, version tags produce a signed release AAB, and no key or secret exists in the public repo. The first-launch date is stored on the very first run, and no tracking SDK is present.
 
-**Plans**: 12/13 plans executed (8 waves)
+**Plans**: 13/13 plans executed (8 waves)
 
 Plans:
 **Wave 1**
@@ -75,7 +75,7 @@ Plans:
 
 **Wave 8** *(blocked on Wave 7 completion)*
 
-- [ ] 01-13-PLAN.md — Calls, ducking, unplug and other media apps handled like a radio; Wi-Fi lock; Stop leaves nothing running
+- [x] 01-13-PLAN.md — Calls, ducking, unplug and other media apps handled like a radio; Wi-Fi lock; Stop leaves nothing running
 
 **UI hint**: yes
 **Notes**: This is the heaviest phase. It holds the explicit playback state machine (including `Interrupted(transient)`), the FGS policy, the stall watchdog, reconnect with backoff and jitter, fallback rotation, the `.pls`/`.m3u` resolver, cp1251 repair, the Wi-Fi lock check, the `PlayContext`/next-prev engine API and the media-ID scheme. `/gsd-plan-phase 1` should run with research (strong flag). Record the unlisted FGS demo video as soon as background playback works, because Play needs it for the declaration in Phase 4. If the phase proves too big for one verified increment, split it with `/gsd-phase --insert` into a skeleton part and a resilience part.
@@ -141,7 +141,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Playback Engine & Walking Skeleton | 12/13 | In Progress|  |
+| 1. Playback Engine & Walking Skeleton | 13/13 | In Progress|  |
 | 2. Station Catalogue, Search & Browse | 0/TBD | Not started | - |
 | 3. Listening Experience | 0/TBD | Not started | - |
 | 4. Hardening, Closed Testing & Store Release | 0/TBD | Not started | - |

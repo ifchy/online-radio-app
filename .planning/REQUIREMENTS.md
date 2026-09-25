@@ -15,8 +15,8 @@ Requirements for initial release (milestone v1.0). Each maps to exactly one road
 - [x] **PLAY-02**: User can control playback (play/pause/stop, station name, now playing) from the media notification and lock screen
 - [ ] **PLAY-03**: User can control playback with wired headset, Bluetooth headset and car Bluetooth buttons
 - [ ] **PLAY-04**: User can skip to the next/previous station from media buttons (headset, steering wheel, notification), cycling through the list playback was started from (favourites by default), with the UI staying in sync
-- [ ] **PLAY-05**: Playback ducks for navigation prompts, pauses for phone calls and other apps, and resumes after a transient interruption — unless the user had paused
-- [ ] **PLAY-06**: Playback pauses when headphones are unplugged or Bluetooth audio disconnects ("becoming noisy")
+- [x] **PLAY-05**: Playback ducks for navigation prompts, pauses for phone calls and other apps, and resumes after a transient interruption — unless the user had paused
+- [x] **PLAY-06**: Playback pauses when headphones are unplugged or Bluetooth audio disconnects ("becoming noisy")
 - [x] **PLAY-07**: After a stream drop, stall or Wi-Fi ↔ mobile data switch, playback automatically reconnects at the live edge within ~10 s, with backoff and a bounded retry budget, while the foreground service stays alive
 - [x] **PLAY-08**: When a station's primary stream fails, the app automatically tries its fallback streams in priority order
 - [ ] **PLAY-09**: User sees clear connecting / buffering / reconnecting / live states and a friendly error state that distinguishes "no internet" from "station unreachable"
@@ -79,7 +79,7 @@ Requirements for initial release (milestone v1.0). Each maps to exactly one road
 - [ ] **PLAT-03**: 60 minutes of screen-off background playback on a physical phone (incl. Xiaomi and Samsung) without dropouts or OS kills
 - [x] **PLAT-04**: CI runs `flutter analyze` + `flutter test` on every PR and builds a signed release AAB on version tags; no signing keys or secrets are ever committed
 - [ ] **PLAT-05**: Unit tests cover catalogue parsing, playlist resolution, search/transliteration (owner-reviewed golden cases), reconnect logic and sleep timer
-- [ ] **PLAT-06**: No wake-locks or foreground service when not playing; no personal data collected and no tracking SDKs
+- [x] **PLAT-06**: No wake-locks or foreground service when not playing; no personal data collected and no tracking SDKs
 
 ### Release
 
@@ -141,8 +141,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PLAY-02 | Phase 1 | Complete |
 | PLAY-03 | Phase 1 | Pending |
 | PLAY-04 | Phase 3 | Pending |
-| PLAY-05 | Phase 1 | Pending |
-| PLAY-06 | Phase 1 | Pending |
+| PLAY-05 | Phase 1 | Complete |
+| PLAY-06 | Phase 1 | Complete |
 | PLAY-07 | Phase 1 | Complete |
 | PLAY-08 | Phase 1 | Complete |
 | PLAY-09 | Phase 4 | Pending |
@@ -187,7 +187,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PLAT-03 | Phase 1 | Pending |
 | PLAT-04 | Phase 1 | Complete |
 | PLAT-05 | Phase 3 | Pending |
-| PLAT-06 | Phase 1 | Pending |
+| PLAT-06 | Phase 1 | Complete |
 | REL-01 | Phase 4 | Pending |
 | REL-02 | Phase 4 | Pending |
 | REL-03 | Phase 4 | Pending |

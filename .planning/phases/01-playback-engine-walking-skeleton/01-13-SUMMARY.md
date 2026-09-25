@@ -308,3 +308,11 @@ These human checks are batched into the Phase 1 UAT. They could not run in this 
 ---
 *Phase: 01-playback-engine-walking-skeleton*
 *Completed: 2026-09-25*
+
+## Self-Check: PASSED
+
+All 13 created or modified files exist. Commits ebac95f, 8001c70, f3f5616 and 5bf40a5 are in git, and no tracked file was deleted. The TDD gate commits are in order: test(01-13) before feat(01-13) for both tasks. Both tasks' grep gates were re-run and pass:
+- Task 1: `interruptionEventStream` and `becomingNoisyEventStream` in the adapter, `transientLoss` in the reducer, and `handleInterruptions: false` in the player.
+- Task 2: the channel name, `WIFI_MODE_FULL_HIGH_PERF` and `setReferenceCounted(false)` in Kotlin, the channel name and `MissingPluginException` in Dart, `onTaskRemoved`, and `WifiLockChannel()` in bootstrap.
+
+The reducer still has no Flutter or plugin import, and the CI engine import boundary holds. `flutter analyze && dart analyze && flutter test` passes with 599 tests, and `flutter build apk --release` succeeds.

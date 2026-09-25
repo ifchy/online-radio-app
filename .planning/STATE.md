@@ -3,17 +3,17 @@ gsd_state_version: "1.0"
 milestone: v1.0
 current_phase: 01
 current_phase_name: Playback Engine & Walking Skeleton
-status: executing
-stopped_at: Completed 01-12-PLAN.md
-last_updated: "2026-09-25T20:16:31.360Z"
+status: verifying
+stopped_at: Completed 01-13-PLAN.md
+last_updated: "2026-09-25T20:31:18.489Z"
 last_activity: 2026-09-25
-last_activity_desc: Completed 01-12 (connectivity)
-state_head: 286f9b4b6b906dc153fdf94c37154ba6efd08f0f
+last_activity_desc: Completed 01-13 (audio focus + Wi-Fi lock)
+state_head: 3b04225593874f533d4f57badfa5656b5c3dd59d
 progress:
   total_phases: 4
   completed_phases: 0
   total_plans: 13
-  completed_plans: 12
+  completed_plans: 13
 ---
 
 # Project State
@@ -27,12 +27,12 @@ See: .planning/PROJECT.md (updated 2026-09-24)
 
 ## Current Position
 
-Phase: 01 (Playback Engine & Walking Skeleton) — EXECUTING
-Plan: 13 of 13 — 12 complete (01-01 to 01-12); wave 8 (01-13, audio focus) is next
-Status: Ready to execute
-Last activity: 2026-09-25 — Completed 01-12 (connectivity)
+Phase: 01 (Playback Engine & Walking Skeleton) — VERIFYING
+Plan: 13 of 13 — all complete (01-01 to 01-13); end-of-phase verification and the owner's device matrix are next
+Status: Phase complete — ready for verification
+Last activity: 2026-09-25 — Completed 01-13 (audio focus + Wi-Fi lock)
 
-Progress: [█████████░] 92% (12/13 plans in Phase 01)
+Progress: [██████████] 100% (13/13 plans in Phase 01)
 
 ## Performance Metrics
 
@@ -71,6 +71,7 @@ Progress: [█████████░] 92% (12/13 plans in Phase 01)
 | Phase 01 P10 | 11 min | 2 tasks | 11 files |
 | Phase 01 P11 | 5 min | 2 tasks | 5 files |
 | Phase 01 P12 | 8 min | 2 tasks | 11 files |
+| Phase 01 P13 | 11 min | 2 tasks | 13 files |
 
 ## Accumulated Context
 
@@ -124,6 +125,11 @@ Recent decisions affecting current work:
 - [Phase 01]: [01-12]: Offline during an outage -> Reconnecting(waitingForNetwork) with no backoff and only the offline budget running (standard 10 min -> PlaybackError(offline), full release); offline while Playing/Buffering only records the flag, and the stall watchdog or a failure takes over
 - [Phase 01]: [01-12]: Online or a network change while Reconnecting/Buffering -> _reloadNow (retry from the last working stream, backoff reset, new generation); while Playing -> a 5 s flow check that reloads only if the current load's buffered position did not advance. Connecting, Paused, Idle and Error never react (PLAY-10)
 - [Phase 01]: [01-12]: RadioAudioHandler's 6th positional parameter is the ConnectivityPort (tests: FakeConnectivityPort); BufferedPositionChanged is reduced but never logged, so the 50-entry diagnostics log stays readable. Flow check on HLS may cause one spurious reload per network change; tune flowCheckDelay on device (A13)
+- [Phase 01]: [01-13]: Focus/noisy events are engine-owned reducer events: a transient loss in an active state -> Interrupted (transport stopped, generation bumped, timers and retry budget reset, focus and playing true kept); the gain resumes as a new session from lastWorkingStreamIndex keeping everPlayed, however long the call (D-11)
+- [Phase 01]: [01-13]: Permanent focus loss and becoming noisy reuse the user-pause row (focus released, never auto-resumed); in Paused/Idle/PlaybackError every focus, noisy and connectivity event gives no commands. Exactly two paths start playback without a user command: Interrupted+gain and Reconnecting+timer/connectivity
+- [Phase 01]: [01-13]: EngineState.ducked tracks a duck (0.3); any transition that releases focus while ducked appends SetVolume(1.0), and the resume after a call restores it first (no duckEnd arrives once focus is abandoned)
+- [Phase 01]: [01-13]: The Wi-Fi lock (MethodChannel bg.izk.radio/wifi_lock, WIFI_MODE_FULL_HIGH_PERF, non-reference-counted) is derived in the handler after each transition: held only in Connecting/Playing/Buffering/Reconnecting; the call is awaited only when the value changes so no-command transitions stay synchronous. WifiLockPort is the handler's 7th positional parameter (tests: FakeWifiLockPort)
+- [Phase 01]: [01-13]: onTaskRemoved stops only in Paused/Idle/PlaybackError. The Dart WifiLockChannel treats MissingPluginException as a no-op (engine started without an activity); v1.1 moves the channel into an in-repo plugin
 
 ### Pending Todos
 
@@ -153,6 +159,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-09-25T20:16:31.337Z
-Stopped at: Completed 01-12-PLAN.md
+Last session: 2026-09-25T20:31:18.465Z
+Stopped at: Completed 01-13-PLAN.md
 Resume file: None
