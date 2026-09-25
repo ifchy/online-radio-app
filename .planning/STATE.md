@@ -4,16 +4,16 @@ milestone: v1.0
 current_phase: 01
 current_phase_name: Playback Engine & Walking Skeleton
 status: executing
-stopped_at: Completed 01-04-PLAN.md
-last_updated: "2026-09-25T15:12:08.811Z"
+stopped_at: Completed 01-06-PLAN.md
+last_updated: "2026-09-25T15:20:48.523Z"
 last_activity: 2026-09-25
-last_activity_desc: Completed 01-04 playlist resolver and HTTPS-only clients
-state_head: 937114a195d6b3a3a911ea0f170a2e3f7f10d752
+last_activity_desc: Completed 01-06 ICY now-playing text pipeline (cp1251 repair, sanitiser, parser)
+state_head: 7dd6cddd99d6ce56f33270696efab0a9a2f88573
 progress:
   total_phases: 4
   completed_phases: 0
   total_plans: 13
-  completed_plans: 3
+  completed_plans: 4
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-09-24)
 ## Current Position
 
 Phase: 01 (Playback Engine & Walking Skeleton) — EXECUTING
-Plan: 3 of 13 complete (01-01, 01-03, 01-04); 01-02 and the rest of Wave 2 still open
+Plan: 4 of 13 complete (01-01, 01-03, 01-04, 01-06); 01-02 and 01-05 (Wave 2) still open
 Status: Ready to execute
-Last activity: 2026-09-25 — Completed 01-04 playlist resolver and HTTPS-only clients
+Last activity: 2026-09-25 — Completed 01-06 ICY now-playing text pipeline (cp1251 repair, sanitiser, parser)
 
-Progress: [██░░░░░░░░] 23% (3/13 plans in Phase 01)
+Progress: [███░░░░░░░] 31% (4/13 plans in Phase 01)
 
 ## Performance Metrics
 
@@ -62,6 +62,7 @@ Progress: [██░░░░░░░░] 23% (3/13 plans in Phase 01)
 | Phase 01 P01 | 2h 3m | 1 tasks | 53 files |
 | Phase 01 P03 | 11 min | 2 tasks | 13 files |
 | Phase 01 P04 | 13 min | 2 tasks | 14 files |
+| Phase 01 P06 | 6 min | 2 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -85,6 +86,8 @@ Recent decisions affecting current work:
 - [Phase 01]: [01-04]: Every catalogue stream goes through StreamResolver before StreamPlayer.load; progressive/hls skip the network, pls/m3u/unknown are fetched once with hard limits (5 s per resolution, 64 KB, 5 redirects, depth 3, 10 candidates, http/https only) and cached 1 h; invalidate() on every playback failure
 - [Phase 01]: [01-04]: Both Dart clients follow redirects by hand (followRedirects=false) so every hop is scheme-checked and the hop cap is deterministic; MockClient cannot report final URLs or enforce maxRedirects
 - [Phase 01]: [01-04]: MediaHttpClient is the only Dart client allowed to fetch http:// (media playlists); Phase 2 catalogue and Radio Browser traffic must use the HTTPS-only AppHttpClient; T-04-06 (block loopback/private playlist entries) is due in Phase 2
+- [Phase 01]: [01-06]: parseIcyTitle runs repairCp1251 BEFORE sanitizeIcyText (reverse of RESEARCH Pattern 5) so cp1251 punctuation („ “ –, arriving as U+0080-U+009F) survives; 01-08 passes the playing stream's icyCharset and republishes only when the NowPlaying value changes
+- [Phase 01]: [01-06]: sanitizeIcyText turns tab/LF/VT/FF/CR into spaces before collapsing and strips all other C0/DEL/C1 and bidi U+202A-202E/U+2066-2069; clamp is 200 code points by runes; a dangling ' - ' separator yields a title-only NowPlaying
 
 ### Pending Todos
 
@@ -108,6 +111,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-09-25T15:12:08.772Z
-Stopped at: Completed 01-04-PLAN.md
+Last session: 2026-09-25T15:20:38.732Z
+Stopped at: Completed 01-06-PLAN.md
 Resume file: None
