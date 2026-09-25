@@ -49,7 +49,7 @@ Plans:
 - [ ] 01-02-PLAN.md — CI on every PR (analyze, dart analyze, test, codegen staleness, release-manifest checks) + signed AAB/APK on tags + explicit SDK levels; owner keystore + secrets (blocking)
 - [x] 01-03-PLAN.md — BG/EN UI via gen-l10n and an accessible mini-player with state labels
 - [x] 01-04-PLAN.md — .pls/.m3u and extension-less HLS stations play (StreamResolver); app-owned traffic HTTPS-only
-- [x] 01-05-PLAN.md — Owner-verified six-station lineup with ordered fallback streams + debug-only test stations (D-02 blocking decision). 4 stations shipped: N-JOY and Витоша were excluded by the owner on 2026-09-25.
+- [x] 01-05-PLAN.md — Owner-verified six-station lineup with ordered fallback streams + debug-only test stations (D-02 blocking decision). 5 stations shipped: Витоша was excluded by the owner on 2026-09-25, and N-JOY uses its cdn.btv.bg stream.
 - [x] 01-06-PLAN.md — cp1251 repair, sanitiser and ICY title parser (pure, golden-tested)
 
 **Wave 3** *(blocked on Wave 2 completion)*
