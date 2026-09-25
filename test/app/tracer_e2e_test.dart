@@ -6,6 +6,7 @@
 // audio_service.
 import 'package:audio_service/audio_service.dart';
 import 'package:clock/clock.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/testing.dart';
@@ -15,11 +16,13 @@ import 'package:radio/features/catalog/application/catalog_providers.dart';
 import 'package:radio/features/catalog/data/station_directory.dart';
 import 'package:radio/features/catalog/domain/station.dart';
 import 'package:radio/features/playback/application/playback_providers.dart';
+import 'package:radio/features/playback/domain/engine_strings.dart';
 import 'package:radio/features/playback/domain/playback_status.dart';
 import 'package:radio/features/playback/engine/audio_service_engine.dart';
 import 'package:radio/features/playback/engine/ports.dart';
 import 'package:radio/features/playback/engine/radio_audio_handler.dart';
 import 'package:radio/features/playback/engine/resolver/stream_resolver.dart';
+import 'package:radio/l10n/app_localizations.dart';
 
 import '../support/fakes.dart';
 
@@ -47,7 +50,16 @@ void main() {
         ),
         const Clock(),
       );
-      final handler = RadioAudioHandler(player, session, directory, resolver);
+      final strings = EngineStrings.fromLocalizations(
+        lookupAppLocalizations(const Locale('en')),
+      );
+      final handler = RadioAudioHandler(
+        player,
+        session,
+        directory,
+        resolver,
+        strings,
+      );
       final engine = AudioServiceEngine(handler);
       final station = directory.byId(StationId.curated('bg-radio'))!;
 

@@ -1,3 +1,5 @@
+import 'dart:ui' show PlatformDispatcher;
+
 import 'package:audio_service/audio_service.dart';
 import 'package:audio_session/audio_session.dart';
 import 'package:clock/clock.dart';
@@ -11,11 +13,13 @@ import '../core/network/user_agent.dart';
 import '../features/catalog/application/catalog_providers.dart';
 import '../features/catalog/data/station_directory.dart';
 import '../features/playback/application/playback_providers.dart';
+import '../features/playback/domain/engine_strings.dart';
 import '../features/playback/engine/audio_service_engine.dart';
 import '../features/playback/engine/audio_session_port_impl.dart';
 import '../features/playback/engine/just_audio_stream_player.dart';
 import '../features/playback/engine/radio_audio_handler.dart';
 import '../features/playback/engine/resolver/stream_resolver.dart';
+import '../l10n/app_localizations.dart';
 import 'app.dart';
 
 /// Composition root. The playback handler is built here, outside the widget
@@ -36,12 +40,21 @@ Future<void> bootstrap() async {
   final mediaClient = MediaHttpClient(http.Client(), userAgent);
   final resolver = HttpStreamResolver(mediaClient, const Clock());
 
+  // Notification text in the device language (D-08, D-09). Built without a
+  // BuildContext: the handler outlives the activity.
+  final strings = EngineStrings.fromLocalizations(
+    lookupAppLocalizations(
+      resolveAppLocale(PlatformDispatcher.instance.locale),
+    ),
+  );
+
   final handler = await AudioService.init(
     builder: () => RadioAudioHandler(
       JustAudioStreamPlayer(userAgent: userAgent),
       AudioSessionPortImpl(),
       directory,
       resolver,
+      strings,
     ),
     config: const AudioServiceConfig(
       // Permanent once shipped: Android keeps the user's channel settings.

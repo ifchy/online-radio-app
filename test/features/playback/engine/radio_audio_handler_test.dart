@@ -2,18 +2,22 @@
 // HttpStreamResolver over a MockClient. Later plans extend this file.
 import 'dart:async';
 
+import 'package:audio_service/audio_service.dart';
 import 'package:clock/clock.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:radio/core/network/media_http_client.dart';
 import 'package:radio/features/catalog/data/station_directory.dart';
 import 'package:radio/features/catalog/domain/station.dart';
+import 'package:radio/features/playback/domain/engine_strings.dart';
 import 'package:radio/features/playback/domain/media_id.dart';
 import 'package:radio/features/playback/domain/playback_status.dart';
 import 'package:radio/features/playback/engine/ports.dart';
 import 'package:radio/features/playback/engine/radio_audio_handler.dart';
 import 'package:radio/features/playback/engine/resolver/stream_resolver.dart';
+import 'package:radio/l10n/app_localizations.dart';
 
 import '../../../support/fakes.dart';
 
@@ -43,6 +47,10 @@ Station _station(String key, String url, StreamKind kind) => Station(
 );
 
 String _mediaId(Station station) => StationMediaId(station.id).format();
+
+final _english = EngineStrings.fromLocalizations(
+  lookupAppLocalizations(const Locale('en')),
+);
 
 void main() {
   final njoy = _station(
@@ -77,7 +85,10 @@ void main() {
         const Clock(),
       ),
     );
-    return (RadioAudioHandler(player, session, directory, resolver), resolver);
+    return (
+      RadioAudioHandler(player, session, directory, resolver, _english),
+      resolver,
+    );
   }
 
   group('stream resolution', () {
@@ -198,6 +209,94 @@ void main() {
       await pumpEventQueue();
       expect(resolver.invalidated, contains(njoy.streams.first));
       expect(handler.status, isA<PlaybackError>());
+    });
+  });
+  group('media item republishing (Anti-Pattern 9, T-07-03)', () {
+    test('the notification shows the station with its state text, '
+        'republished only when the item changes', () async {
+      final (handler, _) = build(
+        MockClient((request) async {
+          fail('Unexpected HTTP request for a progressive stream: $request');
+        }),
+      );
+      final items = <MediaItem?>[];
+      final sub = handler.mediaItem.listen(items.add);
+      addTearDown(sub.cancel);
+
+      await handler.playFromMediaId(_mediaId(direct));
+      await pumpEventQueue();
+      expect(handler.mediaItem.value?.title, 'direct');
+      expect(handler.mediaItem.value?.displaySubtitle, 'Connecting…');
+      final generation = player.lastLoad.generation;
+
+      final before = items.length;
+      // Playing -> Buffering -> Playing: three distinct items.
+      player.emitSnapshot(
+        PlayerProcessingState.ready,
+        playing: true,
+        generation: generation,
+      );
+      player.emitSnapshot(
+        PlayerProcessingState.buffering,
+        playing: true,
+        generation: generation,
+      );
+      player.emitSnapshot(
+        PlayerProcessingState.ready,
+        playing: true,
+        generation: generation,
+      );
+      await pumpEventQueue();
+      expect(handler.status, isA<Playing>());
+      final published = items.sublist(before);
+      expect(published.map((i) => i?.displaySubtitle), [
+        null,
+        'Buffering…',
+        null,
+      ]);
+      expect(published.map((i) => i?.title), everyElement('direct'));
+
+      // A repeated Playing snapshot publishes nothing new.
+      player.emitSnapshot(
+        PlayerProcessingState.ready,
+        playing: true,
+        generation: generation,
+      );
+      await pumpEventQueue();
+      expect(items.length, before + 3);
+
+      // Pause shows "Paused" under the station name.
+      await handler.pause();
+      await pumpEventQueue();
+      expect(handler.mediaItem.value?.title, 'direct');
+      expect(handler.mediaItem.value?.displaySubtitle, 'Paused');
+      expect(items.length, before + 4);
+    });
+
+    test('an error shows "Error" under the station name', () async {
+      final (handler, _) = build(
+        MockClient((request) async => http.Response('gone', 404)),
+      );
+      await handler.playFromMediaId(_mediaId(njoy));
+      await pumpEventQueue();
+      expect(handler.status, isA<PlaybackError>());
+      expect(handler.mediaItem.value?.title, 'njoy');
+      expect(handler.mediaItem.value?.displaySubtitle, 'Error');
+    });
+
+    test('stop clears the item, and the recent root offers the last station '
+        'without a state subtitle', () async {
+      final (handler, _) = build(
+        MockClient((request) async {
+          fail('Unexpected HTTP request for a progressive stream: $request');
+        }),
+      );
+      await handler.playFromMediaId(_mediaId(direct));
+      await handler.stop();
+      expect(handler.mediaItem.value, isNull);
+      final recent = await handler.getChildren(AudioService.recentRootId);
+      expect(recent.map((i) => i.title), ['direct']);
+      expect(recent.single.displaySubtitle, isNull);
     });
   });
 }

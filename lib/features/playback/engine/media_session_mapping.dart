@@ -1,6 +1,7 @@
 import 'package:audio_service/audio_service.dart';
 
 import '../../catalog/domain/station.dart';
+import '../domain/engine_strings.dart';
 import '../domain/media_id.dart';
 import '../domain/playback_status.dart';
 
@@ -44,8 +45,12 @@ PlaybackState playbackStateFor(PlaybackStatus status) {
   );
 }
 
-/// The media-session item for [station]. Plan 01-07 adds the state subtitle.
-MediaItem mediaItemFor(Station station) => MediaItem(
+/// The media-session item for [station] in [status].
+MediaItem mediaItemFor(
+  Station station,
+  PlaybackStatus status,
+  EngineStrings strings,
+) => MediaItem(
   id: StationMediaId(station.id).format(),
   title: station.name,
   isLive: true,

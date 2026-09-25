@@ -4,6 +4,7 @@ import 'package:audio_service/audio_service.dart';
 
 import '../../catalog/data/station_directory.dart';
 import '../../catalog/domain/station.dart';
+import '../domain/engine_strings.dart';
 import '../domain/media_id.dart';
 import '../domain/play_context.dart';
 import '../domain/playback_status.dart';
@@ -31,6 +32,7 @@ class RadioAudioHandler extends BaseAudioHandler {
     this._session,
     this._directory,
     this._resolver,
+    this._strings,
   ) {
     _subscriptions.addAll([
       _player.snapshots.listen(_onSnapshot),
@@ -42,6 +44,7 @@ class RadioAudioHandler extends BaseAudioHandler {
   final AudioSessionPort _session;
   final StationDirectory _directory;
   final StreamResolver _resolver;
+  final EngineStrings _strings;
   final List<StreamSubscription<Object?>> _subscriptions = [];
 
   final _statusController = StreamController<PlaybackStatus>.broadcast();
@@ -127,7 +130,7 @@ class RadioAudioHandler extends BaseAudioHandler {
   ]) async {
     final last = _lastStation;
     if (parentMediaId == AudioService.recentRootId && last != null) {
-      return [mediaItemFor(last)];
+      return [mediaItemFor(last, const PlaybackStatus.idle(), _strings)];
     }
     return const [];
   }
@@ -162,10 +165,13 @@ class RadioAudioHandler extends BaseAudioHandler {
     // Publish before loading, so the FGS starts from the user action.
     _lastStation = station;
     _setStation(station);
-    mediaItem.add(mediaItemFor(station));
-    _setStatus(
-      PlaybackStatus.connecting(station: station, streamIndex: 0, round: 0),
+    final connecting = PlaybackStatus.connecting(
+      station: station,
+      streamIndex: 0,
+      round: 0,
     );
+    mediaItem.add(mediaItemFor(station, connecting, _strings));
+    _setStatus(connecting);
 
     // Playlists and extension-less HLS are resolved in Dart first; the
     // catalogue kind decides the source type, never the file extension.
