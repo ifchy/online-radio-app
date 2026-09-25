@@ -2032,7 +2032,7 @@ void main() {
       });
     });
 
-    test('pause or stop during a call: Paused / Idle with focus released', () {
+    test('pause during a call: Paused with focus released', () {
       fakeAsync((async) {
         final handler = playing(async);
         focus(async, FocusChange.transientLoss);
@@ -2043,6 +2043,9 @@ void main() {
         focus(async, FocusChange.gainAfterPause);
         expect(player.loads, hasLength(1));
       });
+    });
+
+    test('stop during a call: Idle, the service stops', () {
       fakeAsync((async) {
         final handler = playing(async);
         focus(async, FocusChange.transientLoss);

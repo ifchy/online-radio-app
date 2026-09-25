@@ -670,14 +670,24 @@ final class Transition {
 ///   now with the backoff reset; a network change while Playing arms the
 ///   [EngineTimings.flowCheckDelay] flow check, which reloads only if the
 ///   buffered position has not advanced.
-/// - UserPause/UserStop from an active state: Paused/Idle, everything
-///   stopped, every timer cancelled and focus released.
+/// - Audio focus (01-13): a phone call (transient loss) in an active state
+///   goes to Interrupted (transport stopped, focus and the foreground
+///   service kept) and the gain after it resumes with a fresh load (D-11);
+///   another media app (permanent loss) or becoming noisy (unplugged
+///   headphones, Bluetooth gone) is a pause; a navigation prompt ducks the
+///   volume to [duckVolume] and back.
+/// - UserPause/UserStop from an active state (Interrupted included):
+///   Paused/Idle, everything stopped, every timer cancelled and focus
+///   released.
 /// - Guards (PLAY-10): an event stamped with an older generation changes
 ///   nothing, and only UserPlay and UserResume start playback from Paused,
-///   Idle or Error. Reconnecting + its timer or connectivity, Buffering or
-///   Playing + connectivity or the flow check (all mid-session reloads) are
-///   the only paths that start a load without a user command (01-13 adds
-///   focus).
+///   Idle or Error. Exactly two paths start playback without a user
+///   command: Interrupted + gainAfterPause, and Reconnecting + its timer or
+///   connectivity. (The stall watchdog, connectivity and the flow check
+///   while Playing or Buffering reload a stream that is already playing;
+///   they go through the same retry.) Nothing ever resumes after a user
+///   pause or stop, becoming noisy, a permanent focus loss or a
+///   budget-exhausted error.
 class PlaybackStateMachine {
   const PlaybackStateMachine({
     required this.policy,
@@ -687,7 +697,24 @@ class PlaybackStateMachine {
   final ReconnectPolicy policy;
   final EngineTimings timings;
 
-  Transition transition(
+  /// The player volume while another app's short sound plays over ours.
+  static const duckVolume = 0.3;
+
+  Transition transition(EngineState state, EngineEvent event, DateTime now) =>
+      _restoreVolumeOnRelease(_reduce(state, event, now));
+
+  /// Once focus is abandoned no duckEnd can arrive, so a ducked player is
+  /// set back to full volume whenever a transition releases focus (pause,
+  /// stop, error); otherwise the next play would start quiet.
+  static Transition _restoreVolumeOnRelease(Transition t) {
+    if (!t.next.ducked || !t.commands.contains(const ReleaseFocus())) return t;
+    return Transition(t.next.copyWith(ducked: false), [
+      ...t.commands,
+      const SetVolume(1.0),
+    ]);
+  }
+
+  Transition _reduce(
     EngineState state,
     EngineEvent event,
     DateTime now,
@@ -726,8 +753,10 @@ class PlaybackStateMachine {
               const [],
             )
           : _unchanged(state),
-    // RED scaffolding (01-13 Task 1): the focus rows arrive in GREEN.
-    FocusChanged() || BecomingNoisy() => _unchanged(state),
+    FocusChanged(:final change) => _focusChanged(state, change, now),
+    // Unplugged headphones or a Bluetooth disconnect: a user-grade pause,
+    // never resumed by itself (PLAY-06). Ignored outside an active state.
+    BecomingNoisy() => _pause(state),
   };
 
   static Transition _unchanged(EngineState state) =>
@@ -807,6 +836,9 @@ class PlaybackStateMachine {
         connectStartedAt: now,
         startStreamIndex: start,
         budget: state.budget.reset(),
+        // Focus is still held (a new station is not a new focus request),
+        // so a duck in progress ends with its duckEnd.
+        ducked: state.ducked,
       ),
       [
         const CancelAllTimers(),
@@ -1308,6 +1340,89 @@ class PlaybackStateMachine {
           state.generation,
         ),
     ]);
+  }
+
+  /// An audio-focus change (RESEARCH Pattern 1 and "Transition rules").
+  ///
+  /// - transientLoss (a phone call) in Connecting, Playing, Buffering or
+  ///   Reconnecting: Interrupted.
+  /// - gainAfterPause in Interrupted: a fresh load at the live edge (D-11).
+  ///   Anywhere else it is ignored (PLAY-10).
+  /// - permanentLoss (another media app): Paused with focus released, like
+  ///   a user pause; no gain ever follows it.
+  /// - duckBegin / duckEnd: the volume goes to [duckVolume] and back; the
+  ///   status does not change.
+  Transition _focusChanged(
+    EngineState state,
+    FocusChange change,
+    DateTime now,
+  ) => switch (change) {
+    FocusChange.transientLoss => switch (state.status) {
+      Connecting() ||
+      Playing() ||
+      Buffering() ||
+      Reconnecting() => _interrupt(state),
+      _ => _unchanged(state),
+    },
+    FocusChange.gainAfterPause =>
+      state.status is Interrupted
+          ? _resumeAfterInterruption(state, now)
+          : _unchanged(state),
+    FocusChange.permanentLoss => _pause(state),
+    FocusChange.duckBegin =>
+      _isActive(state.status) && !state.ducked
+          ? Transition(state.copyWith(ducked: true), const [
+              SetVolume(duckVolume),
+            ])
+          : _unchanged(state),
+    FocusChange.duckEnd =>
+      state.ducked
+          ? Transition(state.copyWith(ducked: false), const [SetVolume(1.0)])
+          : _unchanged(state),
+  };
+
+  /// A phone call took focus for a while: stop the transport (no audio can
+  /// be heard anyway, and a live stream must not be buffered through the
+  /// call), cancel every timer and forget any outage. Focus is kept:
+  /// audio_session still holds the request after a transient loss, so the
+  /// resume needs no new grant. Interrupted reports `playing: true`, so the
+  /// foreground service stays up through the call (D-11, Pitfall 1).
+  ///
+  /// Nothing but the gain, a user command, a permanent loss or becoming
+  /// noisy changes Interrupted: connectivity only records the flag, stale
+  /// player events and timers are dropped by the new generation, and no
+  /// retry budget runs, so a call of any length resumes.
+  Transition _interrupt(EngineState state) => Transition(
+    state.copyWith(
+      status: PlaybackStatus.interrupted(station: state.station!),
+      generation: state.generation + 1,
+      candidates: const [],
+      candidateIndex: 0,
+      connectStartedAt: null,
+      budget: state.budget.reset(),
+      attempt: 0,
+      flowCheckBaseline: null,
+    ),
+    const [CancelAllTimers(), ClearNowPlaying(), StopTransport()],
+  );
+
+  /// The call ended: a fresh load at the live edge (PLAY-11) from the stream
+  /// that last worked, as if the user pressed play, but keeping whether the
+  /// station had played (so a later drop reconnects instead of giving up).
+  /// A duck cut short by the call is over: full volume again.
+  Transition _resumeAfterInterruption(EngineState state, DateTime now) {
+    final t = _start(
+      state,
+      state.station!,
+      context: state.context,
+      startStreamIndex: state.lastWorkingStreamIndex ?? state.startStreamIndex,
+      now: now,
+      lastWorkingStreamIndex: state.lastWorkingStreamIndex,
+    );
+    return Transition(
+      t.next.copyWith(everPlayed: state.everPlayed, ducked: false),
+      [if (state.ducked) const SetVolume(1.0), ...t.commands],
+    );
   }
 
   /// The retry budget is used up: the station ends in an error with

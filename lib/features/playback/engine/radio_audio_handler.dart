@@ -58,7 +58,12 @@ import 'state_machine.dart';
 ///   at once; a network change while Playing checks after 5 s that audio is
 ///   still arriving (buffered position) and reloads only if not.
 ///
-/// Interruptions (01-13) arrive in a later plan.
+/// - Audio focus and becoming-noisy events (the [AudioSessionPort]) go
+///   through the same queue: a phone call interrupts (transport stopped,
+///   focus and the foreground service kept) and the station resumes live
+///   after hang-up, however long the call (D-11); a navigation prompt ducks
+///   the volume; another media app or unplugging headphones pauses, and
+///   nothing resumes it (PLAY-05, PLAY-06, PLAY-10).
 class RadioAudioHandler extends BaseAudioHandler {
   RadioAudioHandler(
     this._player,
@@ -85,6 +90,14 @@ class RadioAudioHandler extends BaseAudioHandler {
       _player.failures.listen(_onFailure),
       _player.icyTitles.listen(_onIcyTitle),
       _player.bufferedPositions.listen(_onBufferedPosition),
+      // The engine is the single owner of focus and noisy events; just_audio
+      // runs with handleInterruptions: false (Anti-Pattern 3).
+      _session.focusChanges.listen(
+        (change) => unawaited(_dispatch(FocusChanged(change))),
+      ),
+      _session.becomingNoisy.listen(
+        (_) => unawaited(_dispatch(const BecomingNoisy())),
+      ),
     ]);
     unawaited(_watchConnectivity());
   }
