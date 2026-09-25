@@ -1,6 +1,82 @@
 import 'dart:async';
 
+import 'package:radio/features/catalog/domain/station.dart';
+import 'package:radio/features/playback/domain/audio_engine.dart';
+import 'package:radio/features/playback/domain/play_context.dart';
+import 'package:radio/features/playback/domain/playback_status.dart';
 import 'package:radio/features/playback/engine/ports.dart';
+
+/// A recorded [FakeEngine.play] call.
+class PlayCall {
+  const PlayCall(this.station, this.context);
+
+  final Station station;
+  final PlayContext context;
+}
+
+/// [AudioEngine] for widget tests: the test sets the status and current
+/// station, and the fake records the commands it receives. It does not change
+/// its own state when commanded; tests publish the engine's reaction with
+/// [setStatus] / [setStation].
+///
+/// Both streams replay the latest value to a new listener, like the real
+/// engine.
+class FakeEngine implements AudioEngine {
+  FakeEngine({PlaybackStatus status = const PlaybackStatus.idle()})
+    : _status = status,
+      _station = status.stationOrNull;
+
+  PlaybackStatus _status;
+  Station? _station;
+  final _statusChanges = StreamController<PlaybackStatus>.broadcast();
+  final _stationChanges = StreamController<Station?>.broadcast();
+
+  final List<PlayCall> playCalls = [];
+  int togglePauseCalls = 0;
+  int stopCalls = 0;
+
+  /// Publishes [status]; the current station is left as it is.
+  void setStatus(PlaybackStatus status) {
+    _status = status;
+    _statusChanges.add(status);
+  }
+
+  /// Publishes [station] as the current station.
+  void setStation(Station? station) {
+    _station = station;
+    _stationChanges.add(station);
+  }
+
+  @override
+  Stream<PlaybackStatus> get status =>
+      _replayLatest(() => _status, _statusChanges.stream);
+
+  @override
+  PlaybackStatus get currentStatus => _status;
+
+  @override
+  Stream<Station?> get currentStation =>
+      _replayLatest(() => _station, _stationChanges.stream);
+
+  @override
+  Future<void> play(
+    Station station, {
+    PlayContext context = const PlayContext.single(),
+  }) async => playCalls.add(PlayCall(station, context));
+
+  @override
+  Future<void> togglePause() async => togglePauseCalls++;
+
+  @override
+  Future<void> stop() async => stopCalls++;
+
+  static Stream<T> _replayLatest<T>(T Function() latest, Stream<T> changes) =>
+      Stream<T>.multi((controller) {
+        controller.add(latest());
+        final subscription = changes.listen(controller.add);
+        controller.onCancel = subscription.cancel;
+      });
+}
 
 /// One call log shared by the fakes, so tests can assert the global order of
 /// player and audio-session calls.
