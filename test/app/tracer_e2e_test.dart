@@ -201,6 +201,12 @@ void main() {
       expect(engine.currentStatus, isA<Connecting>());
       expect(handler.playbackState.value.playing, isTrue);
       expect(stationEvents.last, station);
+
+      // Cleanup: step 8 is still connecting, and its 10 s connect timer
+      // (01-09) must not outlive the test. Stop cancels every engine timer.
+      await engine.stop();
+      await tester.pump();
+      expect(engine.currentStatus, isA<Idle>());
     },
   );
 }

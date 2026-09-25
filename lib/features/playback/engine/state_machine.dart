@@ -462,11 +462,349 @@ final class Transition {
   final List<EngineCommand> commands;
 }
 
+/// The reducer. [transition] is pure: the same state, event and time always
+/// give the same result, and it never performs a side effect itself.
+///
+/// Rows (RESEARCH Pattern 2, ARCHITECTURE Pattern 3):
+/// - UserPlay from any state: a new session at the live edge.
+/// - Connecting: a failure of the current attempt (resolve failure, player
+///   failure, a load that completes at once, or the connect timer) moves to
+///   the next resolved candidate, then to the next stream. When rotation
+///   comes back to the start stream a round ends; a station that never
+///   played is given up after [EngineTimings.maxDeadOnArrivalRounds] rounds.
+/// - Connecting + ready and playing: Playing, with time-to-audio recorded.
+/// - Playing <-> Buffering on the player's buffering and ready states.
+/// - Playing/Buffering + a failure or `completed`: Error(streamUnreachable).
+///   Plan 01-10 replaces this row with Reconnecting.
+/// - UserPause/UserStop from an active state: Paused/Idle, everything
+///   stopped and focus released.
+/// - Guards (PLAY-10): an event stamped with an older generation changes
+///   nothing, and only UserPlay and UserResume start playback from Paused,
+///   Idle or Error.
 class PlaybackStateMachine {
   const PlaybackStateMachine({this.timings = const EngineTimings()});
 
   final EngineTimings timings;
 
   Transition transition(EngineState state, EngineEvent event, DateTime now) =>
+      switch (event) {
+        UserPlay(:final station, :final context, :final startStreamIndex) =>
+          _start(
+            state,
+            station,
+            context: context,
+            startStreamIndex: startStreamIndex,
+            now: now,
+          ),
+        UserResume() => _resume(state, now),
+        UserPause() => _pause(state),
+        UserStop() => _stop(state),
+        Resolved() => _resolved(state, event),
+        ResolveFailed(:final generation, :final reason) =>
+          generation == state.generation && state.status is Connecting
+              ? _nextStream(state, formatFailure: _isFormatFailure(reason))
+              : _unchanged(state),
+        PlayerStateChanged() => _playerStateChanged(state, event, now),
+        PlayerFailed(:final generation) => _playerFailed(state, generation),
+        TimerFired(:final kind, :final generation) =>
+          kind == TimerKind.connect &&
+                  generation == state.generation &&
+                  state.status is Connecting
+              ? _nextCandidate(state, formatFailure: false)
+              : _unchanged(state),
+      };
+
+  static Transition _unchanged(EngineState state) =>
       Transition(state, const []);
+
+  static const _stopEverything = <EngineCommand>[
+    CancelAllTimers(),
+    ClearNowPlaying(),
+    StopTransport(),
+    ReleaseFocus(),
+  ];
+
+  static bool _isActive(PlaybackStatus status) => switch (status) {
+    Connecting() ||
+    Playing() ||
+    Buffering() ||
+    Reconnecting() ||
+    Interrupted() => true,
+    Idle() || Paused() || PlaybackError() => false,
+  };
+
+  /// Nothing playable behind the URL: retrying elsewhere will not help.
+  static bool _isFormatFailure(StreamResolutionFailure? reason) =>
+      switch (reason) {
+        StreamResolutionFailure.unsupportedScheme ||
+        StreamResolutionFailure.notAPlaylist ||
+        StreamResolutionFailure.empty => true,
+        _ => false,
+      };
+
+  /// A new session on [station]: stop whatever plays, clear now-playing and
+  /// resolve the start stream under a new generation. The handler publishes
+  /// Connecting (playing: true, loading) before running these commands, so
+  /// the foreground service starts from the user action (Pitfall G).
+  Transition _start(
+    EngineState state,
+    Station station, {
+    required PlayContext context,
+    required int startStreamIndex,
+    required DateTime now,
+    int? lastWorkingStreamIndex,
+  }) {
+    final start =
+        startStreamIndex >= 0 && startStreamIndex < station.streams.length
+        ? startStreamIndex
+        : 0;
+    final generation = state.generation + 1;
+    return Transition(
+      EngineState(
+        status: PlaybackStatus.connecting(
+          station: station,
+          streamIndex: start,
+          round: 0,
+        ),
+        station: station,
+        context: context,
+        generation: generation,
+        streamIndex: start,
+        lastWorkingStreamIndex: lastWorkingStreamIndex,
+        connectStartedAt: now,
+        startStreamIndex: start,
+      ),
+      [
+        const StopTransport(),
+        const ClearNowPlaying(),
+        StartTimer(TimerKind.connect, timings.connectTimeout, generation),
+        Resolve(station.streams[start], generation),
+      ],
+    );
+  }
+
+  /// Resume is a fresh load at the live edge (PLAY-11), never a seek. After
+  /// a pause it starts on the stream that last worked; after an error, on the
+  /// stream the user started at.
+  Transition _resume(EngineState state, DateTime now) => switch (state.status) {
+    Paused(:final station) => _start(
+      state,
+      station,
+      context: state.context,
+      startStreamIndex: state.lastWorkingStreamIndex ?? state.startStreamIndex,
+      now: now,
+      lastWorkingStreamIndex: state.lastWorkingStreamIndex,
+    ),
+    PlaybackError(:final station) => _start(
+      state,
+      station,
+      context: state.context,
+      startStreamIndex: state.startStreamIndex,
+      now: now,
+      lastWorkingStreamIndex: state.lastWorkingStreamIndex,
+    ),
+    _ => _unchanged(state),
+  };
+
+  Transition _pause(EngineState state) {
+    final station = state.station;
+    if (station == null || !_isActive(state.status)) return _unchanged(state);
+    return Transition(
+      state.copyWith(
+        status: PlaybackStatus.paused(station: station),
+        generation: state.generation + 1,
+        connectStartedAt: null,
+      ),
+      _stopEverything,
+    );
+  }
+
+  Transition _stop(EngineState state) => Transition(
+    state.copyWith(
+      status: const PlaybackStatus.idle(),
+      station: null,
+      generation: state.generation + 1,
+      candidates: const [],
+      candidateIndex: 0,
+      connectStartedAt: null,
+    ),
+    _stopEverything,
+  );
+
+  Transition _resolved(EngineState state, Resolved event) {
+    if (event.generation != state.generation || state.status is! Connecting) {
+      return _unchanged(state);
+    }
+    // The resolver never returns an empty list; if one ever did, nothing in
+    // this stream is playable.
+    if (event.candidates.isEmpty) {
+      return _nextStream(state, formatFailure: true);
+    }
+    return Transition(
+      state.copyWith(
+        candidates: List.unmodifiable(event.candidates),
+        candidateIndex: 0,
+      ),
+      [Load(event.candidates.first, state.generation)],
+    );
+  }
+
+  Transition _playerStateChanged(
+    EngineState state,
+    PlayerStateChanged event,
+    DateTime now,
+  ) {
+    if (event.generation != state.generation) return _unchanged(state);
+    final readyAndPlaying =
+        event.state == PlayerProcessingState.ready && event.playing;
+    final completed = event.state == PlayerProcessingState.completed;
+    switch (state.status) {
+      case Connecting(:final station, :final streamIndex) when readyAndPlaying:
+        final startedAt = state.connectStartedAt;
+        return Transition(
+          state.copyWith(
+            status: PlaybackStatus.playing(
+              station: station,
+              streamIndex: streamIndex,
+            ),
+            everPlayed: true,
+            lastWorkingStreamIndex: streamIndex,
+            connectStartedAt: null,
+          ),
+          [
+            const CancelTimer(TimerKind.connect),
+            if (startedAt != null) RecordTimeToAudio(now.difference(startedAt)),
+          ],
+        );
+      case Connecting() when completed:
+        // A load that ends before any audio is as dead as a failed one.
+        return _nextCandidate(state, formatFailure: false);
+      case Playing(:final station, :final streamIndex)
+          when event.state == PlayerProcessingState.buffering:
+        return Transition(
+          state.copyWith(
+            status: PlaybackStatus.buffering(
+              station: station,
+              streamIndex: streamIndex,
+            ),
+          ),
+          const [],
+        );
+      case Buffering(:final station, :final streamIndex) when readyAndPlaying:
+        return Transition(
+          state.copyWith(
+            status: PlaybackStatus.playing(
+              station: station,
+              streamIndex: streamIndex,
+            ),
+          ),
+          const [],
+        );
+      case Playing() || Buffering() when completed:
+        // A live stream never ends: the server dropped us (Pitfall 2).
+        return _toError(state, PlaybackErrorKind.streamUnreachable);
+      case _:
+        return _unchanged(state);
+    }
+  }
+
+  Transition _playerFailed(EngineState state, int generation) {
+    if (generation != state.generation) return _unchanged(state);
+    return switch (state.status) {
+      Connecting() => _nextCandidate(state, formatFailure: false),
+      Playing() ||
+      Buffering() => _toError(state, PlaybackErrorKind.streamUnreachable),
+      _ => _unchanged(state),
+    };
+  }
+
+  /// The current candidate failed: try the stream's next resolved candidate,
+  /// or else the next stream.
+  Transition _nextCandidate(EngineState state, {required bool formatFailure}) {
+    final next = state.candidateIndex + 1;
+    if (next >= state.candidates.length) {
+      return _nextStream(state, formatFailure: formatFailure);
+    }
+    final generation = state.generation + 1;
+    return Transition(
+      state.copyWith(
+        generation: generation,
+        candidateIndex: next,
+        onlyFormatFailures: state.onlyFormatFailures && formatFailure,
+      ),
+      [
+        StartTimer(TimerKind.connect, timings.connectTimeout, generation),
+        Load(state.candidates[next], generation),
+      ],
+    );
+  }
+
+  /// The current stream failed: invalidate its resolution and resolve the
+  /// next one. When rotation reaches the start stream again a round ends; a
+  /// station that never played is given up after the last allowed round
+  /// (PLAY-08, T-09-02).
+  Transition _nextStream(EngineState state, {required bool formatFailure}) {
+    final station = state.station!;
+    final failed = station.streams[state.streamIndex];
+    final onlyFormatFailures = state.onlyFormatFailures && formatFailure;
+    final nextIndex = (state.streamIndex + 1) % station.streams.length;
+    final roundEnds = nextIndex == state.startStreamIndex;
+    final nextRound = roundEnds ? state.round + 1 : state.round;
+    if (roundEnds &&
+        (state.everPlayed || nextRound >= timings.maxDeadOnArrivalRounds)) {
+      // A station that played before is not dead on arrival: plan 01-10
+      // turns this into Reconnecting.
+      return _toError(
+        state.copyWith(onlyFormatFailures: onlyFormatFailures),
+        state.everPlayed
+            ? PlaybackErrorKind.streamUnreachable
+            : onlyFormatFailures
+            ? PlaybackErrorKind.unsupportedFormat
+            : PlaybackErrorKind.allStreamsFailed,
+      );
+    }
+    final generation = state.generation + 1;
+    return Transition(
+      state.copyWith(
+        status: PlaybackStatus.connecting(
+          station: station,
+          streamIndex: nextIndex,
+          round: nextRound,
+        ),
+        generation: generation,
+        streamIndex: nextIndex,
+        candidateIndex: 0,
+        round: nextRound,
+        candidates: const [],
+        onlyFormatFailures: onlyFormatFailures,
+      ),
+      [
+        const StopTransport(),
+        InvalidateResolution(failed),
+        StartTimer(TimerKind.connect, timings.connectTimeout, generation),
+        Resolve(station.streams[nextIndex], generation),
+      ],
+    );
+  }
+
+  /// Ends the session in [kind]: every timer cancelled, the failed stream's
+  /// resolution dropped (the URL may be stale), the transport stopped and
+  /// focus released, so the foreground service goes (T-09-02).
+  Transition _toError(EngineState state, PlaybackErrorKind kind) {
+    final stream = state.currentStream;
+    return Transition(
+      state.copyWith(
+        status: PlaybackStatus.error(station: state.station!, kind: kind),
+        generation: state.generation + 1,
+        connectStartedAt: null,
+      ),
+      [
+        const CancelAllTimers(),
+        if (stream != null) InvalidateResolution(stream),
+        const ClearNowPlaying(),
+        const StopTransport(),
+        const ReleaseFocus(),
+      ],
+    );
+  }
 }
