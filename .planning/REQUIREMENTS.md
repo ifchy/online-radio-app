@@ -74,10 +74,10 @@ Requirements for initial release (milestone v1.0). Each maps to exactly one road
 
 ### Platform & Quality
 
-- [ ] **PLAT-01**: App installs on Android 7.0+ (minSdk 24) and targets the API level Google Play requires (36)
+- [x] **PLAT-01**: App installs on Android 7.0+ (minSdk 24) and targets the API level Google Play requires (36)
 - [ ] **PLAT-02**: Cold start to interactive UI < 2 s on a mid-range phone; smooth scrolling on low-end devices; small AAB
 - [ ] **PLAT-03**: 60 minutes of screen-off background playback on a physical phone (incl. Xiaomi and Samsung) without dropouts or OS kills
-- [ ] **PLAT-04**: CI runs `flutter analyze` + `flutter test` on every PR and builds a signed release AAB on version tags; no signing keys or secrets are ever committed
+- [x] **PLAT-04**: CI runs `flutter analyze` + `flutter test` on every PR and builds a signed release AAB on version tags; no signing keys or secrets are ever committed
 - [ ] **PLAT-05**: Unit tests cover catalogue parsing, playlist resolution, search/transliteration (owner-reviewed golden cases), reconnect logic and sleep timer
 - [ ] **PLAT-06**: No wake-locks or foreground service when not playing; no personal data collected and no tracking SDKs
 
@@ -182,10 +182,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | APP-09 | Phase 4 | Pending |
 | APP-10 | Phase 3 | Pending |
 | APP-11 | Phase 2 | Pending |
-| PLAT-01 | Phase 1 | Pending |
+| PLAT-01 | Phase 1 | Complete |
 | PLAT-02 | Phase 4 | Pending |
 | PLAT-03 | Phase 1 | Pending |
-| PLAT-04 | Phase 1 | Pending |
+| PLAT-04 | Phase 1 | Complete |
 | PLAT-05 | Phase 3 | Pending |
 | PLAT-06 | Phase 1 | Pending |
 | REL-01 | Phase 4 | Pending |
