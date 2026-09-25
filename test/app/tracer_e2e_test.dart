@@ -160,6 +160,20 @@ void main() {
       expect(stationEvents.first, isNull);
       expect(stationEvents, contains(station));
       expect(stationEvents.last, isNull);
+
+      // 8. Play from Android's media card after Stop (or a Bluetooth PLAY):
+      //    the last station starts again with a fresh load; the recent root
+      //    offers it for resumption.
+      final recent = await handler.getChildren(AudioService.recentRootId);
+      expect(recent.map((i) => i.title), [station.name]);
+      final loadsBefore = player.loads.length;
+      await handler.play();
+      await tester.pump();
+      expect(player.loads, hasLength(loadsBefore + 1));
+      expect(player.lastLoad.uri, station.streams.first.url);
+      expect(engine.currentStatus, isA<Connecting>());
+      expect(handler.playbackState.value.playing, isTrue);
+      expect(stationEvents.last, station);
     },
   );
 }

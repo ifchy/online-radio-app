@@ -43,6 +43,12 @@ class RadioAudioHandler extends BaseAudioHandler {
 
   PlaybackStatus _status = const PlaybackStatus.idle();
   Station? _station;
+
+  /// The station most recently started, kept after Stop. Android shows a
+  /// resumable media card for the app after Stop (audio_service always
+  /// answers the system UI's "recent" browse query), and its Play button, a
+  /// Bluetooth PLAY or a car must start this station again.
+  Station? _lastStation;
   int _generation = 0;
 
   /// The list the current station was started from.
@@ -86,15 +92,34 @@ class RadioAudioHandler extends BaseAudioHandler {
 
   @override
   Future<void> play() async {
-    final station = _station;
-    if (station == null) return;
     switch (_status) {
       case Paused() || PlaybackError():
-        await _start(station);
+        final station = _station;
+        if (station != null) await _start(station);
+      case Idle():
+        // After Stop: the media card's Play (or a headset/Bluetooth PLAY)
+        // starts the last station again, live.
+        final station = _lastStation;
+        if (station != null) await _start(station);
       case _:
-        // Idle has nothing to resume; active states are already playing.
+        // Active states are already playing.
         break;
     }
+  }
+
+  /// Answers the system UI's media-resumption query ([AudioService.recentRootId])
+  /// with the last station, so the card after Stop is playable. The full
+  /// browse tree (Android Auto) arrives in v1.1.
+  @override
+  Future<List<MediaItem>> getChildren(
+    String parentMediaId, [
+    Map<String, dynamic>? options,
+  ]) async {
+    final last = _lastStation;
+    if (parentMediaId == AudioService.recentRootId && last != null) {
+      return [mediaItemFor(last)];
+    }
+    return const [];
   }
 
   @override
@@ -125,6 +150,7 @@ class RadioAudioHandler extends BaseAudioHandler {
     if (generation != _generation) return;
 
     // Publish before loading, so the FGS starts from the user action.
+    _lastStation = station;
     _setStation(station);
     mediaItem.add(mediaItemFor(station));
     _setStatus(
