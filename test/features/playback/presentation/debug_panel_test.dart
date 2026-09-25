@@ -8,6 +8,7 @@ import 'package:radio/features/catalog/data/station_directory.dart';
 import 'package:radio/features/catalog/domain/station.dart';
 import 'package:radio/features/playback/application/playback_providers.dart';
 import 'package:radio/features/playback/domain/engine_diagnostics.dart';
+import 'package:radio/features/playback/domain/play_context.dart';
 import 'package:radio/features/playback/engine/ports.dart';
 import 'package:radio/features/playback/presentation/debug_panel.dart';
 import 'package:radio/l10n/app_localizations.dart';
@@ -236,6 +237,64 @@ void main() {
       tester,
     ) async {
       expect(const HomeScreen().showDebugTools, isTrue);
+    });
+  });
+
+  group('the stream switcher (SC1)', () {
+    testWidgets(
+      'lists every stream of the current station with a Play button',
+      (tester) async {
+        await _pump(tester, _engine(), _panelHost);
+
+        expect(find.text('#0 progressive · mp3 · 128 kbps'), findsOneWidget);
+        expect(find.text('#1 hls · aac · 64 kbps'), findsOneWidget);
+        expect(find.text('#2 pls · — · —'), findsOneWidget);
+        for (final stream in _station.streams) {
+          expect(find.text(stream.url.toString()), findsOneWidget);
+        }
+        for (var i = 0; i < _station.streams.length; i++) {
+          expect(find.widgetWithText(TextButton, 'Play #$i'), findsOneWidget);
+          expect(find.byTooltip('Play stream $i'), findsOneWidget);
+        }
+        expect(find.text('No station'), findsNothing);
+      },
+    );
+
+    testWidgets('"Play #2" starts streams[2] exactly once', (tester) async {
+      final engine = _engine();
+      await _pump(tester, engine, _panelHost);
+
+      final button = find.widgetWithText(TextButton, 'Play #2');
+      await tester.ensureVisible(button);
+      await tester.tap(button);
+      await tester.pump();
+
+      expect(engine.playCalls, hasLength(1));
+      final call = engine.playCalls.single;
+      expect(call.station, _station);
+      expect(call.startStreamIndex, 2);
+      expect(call.context, isA<SinglePlayContext>());
+    });
+
+    testWidgets('with no current station it shows "No station"', (
+      tester,
+    ) async {
+      final engine = _engine(withStation: false);
+      await _pump(tester, engine, _panelHost);
+
+      expect(find.text('No station'), findsOneWidget);
+      expect(find.byType(TextButton), findsNothing);
+      expect(engine.playCalls, isEmpty);
+    });
+
+    testWidgets('meets the tap-target and label guidelines', (tester) async {
+      final semantics = tester.ensureSemantics();
+      await _pump(tester, _engine(), _panelHost);
+
+      expect(find.byType(TextButton), findsNWidgets(3));
+      await expectLater(tester, meetsGuideline(androidTapTargetGuideline));
+      await expectLater(tester, meetsGuideline(labeledTapTargetGuideline));
+      semantics.dispose();
     });
   });
 }
