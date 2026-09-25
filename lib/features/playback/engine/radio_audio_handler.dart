@@ -9,6 +9,7 @@ import '../domain/media_id.dart';
 import '../domain/now_playing.dart';
 import '../domain/play_context.dart';
 import '../domain/playback_status.dart';
+import 'icy/now_playing_parser.dart';
 import 'media_session_mapping.dart';
 import 'ports.dart';
 
@@ -38,6 +39,7 @@ class RadioAudioHandler extends BaseAudioHandler {
     _subscriptions.addAll([
       _player.snapshots.listen(_onSnapshot),
       _player.failures.listen(_onFailure),
+      _player.icyTitles.listen(_onIcyTitle),
     ]);
   }
 
@@ -257,6 +259,34 @@ class RadioAudioHandler extends BaseAudioHandler {
     }
   }
 
+  /// ICY "now playing" (RESEARCH Pattern 5). Only parseIcyTitle's output
+  /// (repaired, sanitised, junk-filtered) ever reaches the media session;
+  /// the raw title never does (T-08-01).
+  void _onIcyTitle(IcyTitle icy) {
+    if (icy.generation != _generation) return;
+    final station = _station;
+    final stream = _currentStream;
+    if (station == null || stream == null) return;
+    _setNowPlaying(
+      parseIcyTitle(icy.title, station: station, charset: stream.icyCharset),
+    );
+  }
+
+  /// Publishes [value] when it differs from the last one (NowPlaying value
+  /// equality). Each media-item update redraws the notification, so an
+  /// unchanged title republishes nothing (Anti-Pattern 9, T-08-02).
+  void _setNowPlaying(NowPlaying? value) {
+    if (value == _nowPlaying) return;
+    _nowPlaying = value;
+    _nowPlayingController.add(value);
+    final station = _status.stationOrNull;
+    if (station != null) {
+      _publishMediaItem(
+        mediaItemFor(station, _status, _strings, nowPlaying: value),
+      );
+    }
+  }
+
   void _onFailure(PlayerFailure failure) {
     if (failure.generation != _generation || !_isActive) return;
     final station = _station;
@@ -288,7 +318,9 @@ class RadioAudioHandler extends BaseAudioHandler {
     _status = status;
     final station = status.stationOrNull;
     if (station != null) {
-      _publishMediaItem(mediaItemFor(station, status, _strings));
+      _publishMediaItem(
+        mediaItemFor(station, status, _strings, nowPlaying: _nowPlaying),
+      );
     }
     playbackState.add(playbackStateFor(status));
     _statusController.add(status);

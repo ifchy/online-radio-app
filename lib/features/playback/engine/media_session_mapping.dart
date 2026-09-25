@@ -50,22 +50,31 @@ PlaybackState playbackStateFor(PlaybackStatus status) {
 /// The media-session item for [station] in [status]: what the notification
 /// and the lock screen show.
 ///
-/// The title is always the station name. Under it goes the same state text
-/// the mini-player shows (D-09) whenever the player is not simply playing.
-/// Playing and Idle have no subtitle; plan 01-08 puts the ICY now-playing
-/// text there while Playing.
+/// The title is always the station name, so the notification always shows
+/// which station is playing. Under it goes the same state text the
+/// mini-player shows (D-09) whenever the player is not simply playing. While
+/// Playing, the subtitle is the station's [nowPlaying] text (ICY) and the
+/// artist is its artist, or the whole text when it has none; with no
+/// now-playing value there is no subtitle. Idle has no subtitle.
 MediaItem mediaItemFor(
   Station station,
   PlaybackStatus status,
   EngineStrings strings, {
   NowPlaying? nowPlaying,
 }) {
-  final stateText = _stateText(status, strings);
+  final String? artist;
+  final String? subtitle;
+  if (status is Playing && nowPlaying != null) {
+    artist = nowPlaying.artist ?? nowPlaying.text;
+    subtitle = nowPlaying.text;
+  } else {
+    artist = subtitle = _stateText(status, strings);
+  }
   return MediaItem(
     id: StationMediaId(station.id).format(),
     title: station.name,
-    artist: stateText,
-    displaySubtitle: stateText,
+    artist: artist,
+    displaySubtitle: subtitle,
     isLive: true,
     extras: {'stationId': station.id.value},
   );
