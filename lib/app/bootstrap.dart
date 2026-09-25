@@ -7,9 +7,11 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/network/media_http_client.dart';
 import '../core/network/user_agent.dart';
+import '../core/settings/settings_repository.dart';
 import '../features/catalog/application/catalog_providers.dart';
 import '../features/catalog/data/station_directory.dart';
 import '../features/playback/application/playback_providers.dart';
@@ -28,6 +30,13 @@ import 'app.dart';
 Future<void> bootstrap() async {
   WidgetsFlutterBinding.ensureInitialized();
   final packageInfo = await PackageInfo.fromPlatform();
+
+  // APP-06: written once, on the very first run, before anything else can
+  // fail. Order: prefs -> first launch -> session -> AudioService.init ->
+  // container.
+  final prefs = SharedPreferencesAsync();
+  final settings = SettingsRepository(prefs, const Clock());
+  final firstLaunchAt = await settings.ensureFirstLaunchAt();
 
   final session = await AudioSession.instance;
   await session.configure(const AudioSessionConfiguration.music());
@@ -85,6 +94,7 @@ Future<void> bootstrap() async {
     overrides: [
       audioEngineProvider.overrideWithValue(AudioServiceEngine(handler)),
       stationDirectoryProvider.overrideWithValue(directory),
+      firstLaunchAtProvider.overrideWithValue(firstLaunchAt),
     ],
     // Reconnect logic lives in the engine; Riverpod must never auto-retry.
     retry: (_, _) => null,

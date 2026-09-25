@@ -1,6 +1,7 @@
 // APP-06: the first-launch date is written once, on the very first run, and
 // later launches never overwrite it.
 import 'package:clock/clock.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:radio/core/settings/settings_repository.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -51,6 +52,30 @@ void main() {
     expect(recorded, local.toUtc());
     expect(await prefs.getString(_key), local.toUtc().toIso8601String());
   });
+
+  test('an unreadable stored value never breaks startup: it reads as null '
+      'and the next launch records a valid date', () async {
+    await prefs.setString(_key, 'not a date');
+    final repo = SettingsRepository(prefs, Clock.fixed(firstRun));
+    expect(await repo.firstLaunchAt(), isNull);
+    expect(await repo.ensureFirstLaunchAt(), firstRun);
+    expect(await prefs.getString(_key), '2026-09-25T16:30:05.000Z');
+  });
+
+  test(
+    'firstLaunchAtProvider must be overridden, and returns the override',
+    () {
+      final unset = ProviderContainer();
+      addTearDown(unset.dispose);
+      expect(() => unset.read(firstLaunchAtProvider), throwsA(anything));
+
+      final container = ProviderContainer(
+        overrides: [firstLaunchAtProvider.overrideWithValue(firstRun)],
+      );
+      addTearDown(container.dispose);
+      expect(container.read(firstLaunchAtProvider), firstRun);
+    },
+  );
 
   test('firstLaunchAt is null before the first run and the stored date '
       'after it', () async {
