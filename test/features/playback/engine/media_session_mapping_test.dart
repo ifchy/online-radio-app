@@ -232,6 +232,28 @@ void main() {
       'PlaybackError': 'Грешка',
       'Idle': null,
     };
+    test('Paused after a title was showing: the state text replaces the ICY '
+        'text', () {
+      final playing = mediaItemFor(
+        _station,
+        rows['Playing']!.status,
+        bg,
+        nowPlaying: song,
+      );
+      expect(playing.displaySubtitle, 'Артист - Песен');
+
+      final paused = mediaItemFor(
+        _station,
+        rows['Paused']!.status,
+        bg,
+        nowPlaying: song,
+      );
+      expect(paused.title, 'БГ Радио');
+      expect(paused.displaySubtitle, 'На пауза');
+      expect(paused.artist, 'На пауза');
+      expect(sameMediaItem(playing, paused), isFalse);
+    });
+
     for (final MapEntry(key: name, value: text) in stateTexts.entries) {
       test('$name keeps its state text and never shows the ICY text', () {
         final item = mediaItemFor(

@@ -389,5 +389,180 @@ void main() {
       expect(handler.nowPlaying?.text, 'Rock Àç');
       expect(handler.mediaItem.value?.displaySubtitle, 'Rock Àç');
     });
+
+    group('never stale, never junk (Pitfall E, Pitfall 6, T-08-03)', () {
+      /// Plays [direct] with the title 'Артист - Песен' showing.
+      Future<(RadioAudioHandler, int, List<NowPlaying?>)>
+      playingWithTitle() async {
+        final handler = noHttpHandler();
+        final emitted = <NowPlaying?>[];
+        final sub = handler.nowPlayingStream.listen(emitted.add);
+        addTearDown(sub.cancel);
+        final generation = await startPlaying(handler, direct);
+        player.emitIcy('Артист - Песен', generation: generation);
+        await pumpEventQueue();
+        expect(handler.mediaItem.value?.displaySubtitle, 'Артист - Песен');
+        return (handler, generation, emitted);
+      }
+
+      test('switching station clears the title at once, and a late title '
+          'from the previous station is ignored', () async {
+        final (handler, oldGeneration, emitted) = await playingWithTitle();
+
+        await handler.playFromMediaId(_mediaId(cyrillic));
+        // Cleared before the new station is even ready.
+        expect(handler.status, isA<Connecting>());
+        expect(emitted.last, isNull);
+        expect(handler.nowPlaying, isNull);
+
+        final generation = player.lastLoad.generation;
+        player.emitSnapshot(
+          PlayerProcessingState.ready,
+          playing: true,
+          generation: generation,
+        );
+        await pumpEventQueue();
+        expect(handler.status, isA<Playing>());
+        expect(handler.mediaItem.value?.title, 'cyrillic');
+        expect(handler.mediaItem.value?.displaySubtitle, isNull);
+        expect(handler.mediaItem.value?.artist, isNull);
+
+        // The previous station's title arrives late: it is dropped.
+        player.emitIcy('Артист - Песен', generation: oldGeneration);
+        await pumpEventQueue();
+        expect(handler.nowPlaying, isNull);
+        expect(handler.mediaItem.value?.displaySubtitle, isNull);
+      });
+
+      test(
+        'an ICY title that arrives before the load is ready is ignored',
+        () async {
+          final handler = noHttpHandler();
+          await handler.playFromMediaId(_mediaId(direct));
+          final generation = player.lastLoad.generation;
+
+          // The native player can replay the previous source's ICY state
+          // right after a load, stamped with the new generation.
+          player.emitIcy('Стара - Песен', generation: generation);
+          await pumpEventQueue();
+          expect(handler.nowPlaying, isNull);
+
+          player.emitSnapshot(
+            PlayerProcessingState.ready,
+            playing: true,
+            generation: generation,
+          );
+          await pumpEventQueue();
+          expect(handler.status, isA<Playing>());
+          expect(handler.nowPlaying, isNull);
+          expect(handler.mediaItem.value?.displaySubtitle, isNull);
+
+          // After ready, titles of this load are shown.
+          player.emitIcy('Нова - Песен', generation: generation);
+          await pumpEventQueue();
+          expect(handler.mediaItem.value?.displaySubtitle, 'Нова - Песен');
+        },
+      );
+
+      test(
+        'the same title delivered twice publishes the media item once',
+        () async {
+          final handler = noHttpHandler();
+          final generation = await startPlaying(handler, direct);
+          final items = <MediaItem?>[];
+          final sub = handler.mediaItem.skip(1).listen(items.add);
+          addTearDown(sub.cancel);
+          final emitted = <NowPlaying?>[];
+          final nowSub = handler.nowPlayingStream.listen(emitted.add);
+          addTearDown(nowSub.cancel);
+
+          player.emitIcy('Артист - Песен', generation: generation);
+          player.emitIcy('Артист - Песен', generation: generation);
+          // Differs only in whitespace, which the parser collapses.
+          player.emitIcy('  Артист  -  Песен ', generation: generation);
+          await pumpEventQueue();
+
+          expect(items, hasLength(1));
+          expect(items.single?.displaySubtitle, 'Артист - Песен');
+          expect(emitted, hasLength(1));
+        },
+      );
+
+      test('pause clears now-playing', () async {
+        final (handler, _, emitted) = await playingWithTitle();
+
+        await handler.pause();
+        await pumpEventQueue();
+
+        expect(emitted.last, isNull);
+        expect(handler.nowPlaying, isNull);
+        expect(handler.mediaItem.value?.displaySubtitle, 'Paused');
+        expect(handler.mediaItem.value?.artist, 'Paused');
+
+        // Resuming is a fresh load: no title until the station sends one.
+        await handler.play();
+        final generation = player.lastLoad.generation;
+        player.emitSnapshot(
+          PlayerProcessingState.ready,
+          playing: true,
+          generation: generation,
+        );
+        await pumpEventQueue();
+        expect(handler.status, isA<Playing>());
+        expect(handler.mediaItem.value?.displaySubtitle, isNull);
+      });
+
+      test('stop clears now-playing', () async {
+        final (handler, _, emitted) = await playingWithTitle();
+
+        await handler.stop();
+        await pumpEventQueue();
+
+        expect(emitted.last, isNull);
+        expect(handler.nowPlaying, isNull);
+        expect(handler.mediaItem.value, isNull);
+      });
+
+      test('a player failure clears now-playing', () async {
+        final (handler, generation, emitted) = await playingWithTitle();
+
+        player.emitFailure(generation: generation);
+        await pumpEventQueue();
+
+        expect(handler.status, isA<PlaybackError>());
+        expect(emitted.last, isNull);
+        expect(handler.nowPlaying, isNull);
+        expect(handler.mediaItem.value?.displaySubtitle, 'Error');
+      });
+
+      for (final (label, junk) in [
+        ("'-'", '-'),
+        ('an empty title', ''),
+        ('no title at all', null),
+        ('the station name', 'direct'),
+        ('a URL', 'https://radio.example/live'),
+      ]) {
+        test('$label after a real title clears the line, never showing '
+            "'null'", () async {
+          final (handler, generation, emitted) = await playingWithTitle();
+          final items = <MediaItem?>[];
+          final sub = handler.mediaItem.listen(items.add);
+          addTearDown(sub.cancel);
+
+          player.emitIcy(junk, generation: generation);
+          await pumpEventQueue();
+
+          expect(emitted.last, isNull);
+          expect(handler.nowPlaying, isNull);
+          expect(handler.mediaItem.value?.title, 'direct');
+          expect(handler.mediaItem.value?.displaySubtitle, isNull);
+          expect(handler.mediaItem.value?.artist, isNull);
+          for (final item in items) {
+            expect(item?.displaySubtitle, isNot(contains('null')));
+            expect(item?.artist, isNot(contains('null')));
+          }
+        });
+      }
+    });
   });
 }
