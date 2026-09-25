@@ -59,6 +59,7 @@ void main() {
         directory,
         resolver,
         strings,
+        FakeConnectivityPort(),
       );
       final engine = AudioServiceEngine(handler);
       final station = directory.byId(StationId.curated('bg-radio'))!;

@@ -60,7 +60,8 @@ class RadioAudioHandler extends BaseAudioHandler {
     this._session,
     this._directory,
     this._resolver,
-    this._strings, {
+    this._strings,
+    this._connectivity, {
     EngineTimings timings = const EngineTimings(),
     Clock? clock,
     RetryBudgetPreset initialRetryBudget = RetryBudgetPreset.standard,
@@ -86,6 +87,7 @@ class RadioAudioHandler extends BaseAudioHandler {
   final StationDirectory _directory;
   final StreamResolver _resolver;
   final EngineStrings _strings;
+  final ConnectivityPort _connectivity;
   final PlaybackStateMachine _machine;
 
   /// Null: the zone's clock (fake under fakeAsync).

@@ -22,6 +22,8 @@ final class EngineTimings {
     this.maxDeadOnArrivalRounds = 2,
     this.stallTimeout = const Duration(seconds: 8),
     this.stablePlayingReset = const Duration(seconds: 30),
+    this.flowCheckDelay = const Duration(seconds: 5),
+    this.connectivityDebounce = const Duration(milliseconds: 500),
   });
 
   /// How long one attempt (resolve plus load) may take to produce audio
@@ -38,6 +40,16 @@ final class EngineTimings {
   /// How long playback must be stable before the backoff and the retry
   /// budget reset.
   final Duration stablePlayingReset;
+
+  /// How long after a network change while Playing the buffered position
+  /// must have advanced; if it has not, the stream is reloaded at once
+  /// instead of waiting for the buffer to drain (RESEARCH A13: tune on a
+  /// device).
+  final Duration flowCheckDelay;
+
+  /// How long the raw connectivity signal must be quiet before a change is
+  /// reported (the ConnectivityPort adapter's debounce, T-12-02).
+  final Duration connectivityDebounce;
 }
 
 /// The timers the handler runs for the state machine.
@@ -56,6 +68,10 @@ enum TimerKind {
 
   /// What is left of the retry budget ([RetryBudgetClock.remaining]).
   budget,
+
+  /// The flow check after a network change while Playing
+  /// ([EngineTimings.flowCheckDelay]).
+  flowCheck,
 }
 
 /// Everything the reducer knows. Immutable; [copyWith] builds the next one.
@@ -76,6 +92,8 @@ final class EngineState {
     this.onlyFormatFailures = true,
     this.budget = const RetryBudgetClock(),
     this.attempt = 0,
+    this.lastBuffered,
+    this.flowCheckBaseline,
   });
 
   /// Nothing loaded, generation 0.
@@ -130,6 +148,27 @@ final class EngineState {
   /// Reconnect retries started in the current outage.
   final int attempt;
 
+  /// The latest buffered position the player reported, with the generation
+  /// of the load it belongs to.
+  final ({int generation, Duration position})? lastBuffered;
+
+  /// The buffered position when the flow check was armed; null when no check
+  /// is pending or nothing had been buffered yet.
+  final Duration? flowCheckBaseline;
+
+  /// Whether the network is up, as last reported. The budget clock owns the
+  /// flag, so the two can never disagree.
+  bool get online => budget.online;
+
+  /// The buffered position of the current load, or null when it has
+  /// reported none.
+  Duration? get currentBufferedPosition {
+    final buffered = lastBuffered;
+    return buffered != null && buffered.generation == generation
+        ? buffered.position
+        : null;
+  }
+
   /// The stream being tried or played, or null when idle.
   StationStream? get currentStream => station?.streams[streamIndex];
 
@@ -153,6 +192,8 @@ final class EngineState {
     bool? onlyFormatFailures,
     RetryBudgetClock? budget,
     int? attempt,
+    Object? lastBuffered = _unset,
+    Object? flowCheckBaseline = _unset,
   }) => EngineState(
     status: status ?? this.status,
     station: identical(station, _unset) ? this.station : station as Station?,
@@ -173,6 +214,12 @@ final class EngineState {
     onlyFormatFailures: onlyFormatFailures ?? this.onlyFormatFailures,
     budget: budget ?? this.budget,
     attempt: attempt ?? this.attempt,
+    lastBuffered: identical(lastBuffered, _unset)
+        ? this.lastBuffered
+        : lastBuffered as ({int generation, Duration position})?,
+    flowCheckBaseline: identical(flowCheckBaseline, _unset)
+        ? this.flowCheckBaseline
+        : flowCheckBaseline as Duration?,
   );
 
   @override
@@ -315,6 +362,39 @@ final class SetRetryBudget extends EngineEvent {
 
   @override
   String toString() => 'SetRetryBudget(${preset.name})';
+}
+
+/// The network went up, went down or changed (from the debounced
+/// ConnectivityPort).
+final class ConnectivityChanged extends EngineEvent {
+  const ConnectivityChanged({
+    required this.online,
+    this.networkChanged = false,
+  });
+
+  final bool online;
+  final bool networkChanged;
+
+  @override
+  String toString() =>
+      'ConnectivityChanged(${online ? 'online' : 'offline'}'
+      '${networkChanged ? ', network changed' : ''})';
+}
+
+/// The player's buffered position for the load of [generation] (the flow
+/// check's signal that audio is still arriving).
+///
+/// Named apart from the port's `BufferedPosition` value, which the handler
+/// turns into this event.
+final class BufferedPositionChanged extends EngineEvent {
+  const BufferedPositionChanged(this.generation, this.position);
+
+  final int generation;
+  final Duration position;
+
+  @override
+  String toString() =>
+      'BufferedPositionChanged(gen $generation, ${position.inMilliseconds} ms)';
 }
 
 // ---------------------------------------------------------------------------
@@ -581,6 +661,8 @@ class PlaybackStateMachine {
       now,
     ),
     SetRetryBudget(:final preset) => _setRetryBudget(state, preset, now),
+    ConnectivityChanged() => _unchanged(state),
+    BufferedPositionChanged() => _unchanged(state),
   };
 
   static Transition _unchanged(EngineState state) =>

@@ -3,6 +3,7 @@ import 'dart:ui' show PlatformDispatcher;
 import 'package:audio_service/audio_service.dart';
 import 'package:audio_session/audio_session.dart';
 import 'package:clock/clock.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
@@ -18,9 +19,11 @@ import '../features/playback/application/playback_providers.dart';
 import '../features/playback/domain/engine_strings.dart';
 import '../features/playback/engine/audio_service_engine.dart';
 import '../features/playback/engine/audio_session_port_impl.dart';
+import '../features/playback/engine/connectivity_port_impl.dart';
 import '../features/playback/engine/just_audio_stream_player.dart';
 import '../features/playback/engine/radio_audio_handler.dart';
 import '../features/playback/engine/resolver/stream_resolver.dart';
+import '../features/playback/engine/state_machine.dart';
 import '../l10n/app_localizations.dart';
 import 'app.dart';
 
@@ -64,6 +67,12 @@ Future<void> bootstrap() async {
       directory,
       resolver,
       strings,
+      // Network changes trigger an immediate reconnect instead of waiting
+      // for ExoPlayer's I/O timeouts (PLAY-07).
+      ConnectivityPortImpl(
+        Connectivity(),
+        debounce: const EngineTimings().connectivityDebounce,
+      ),
     ),
     config: AudioServiceConfig(
       // Permanent once shipped: Android keeps the user's channel settings.

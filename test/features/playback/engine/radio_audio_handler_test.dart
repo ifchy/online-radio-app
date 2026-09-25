@@ -94,10 +94,12 @@ void main() {
 
   late FakeStreamPlayer player;
   late FakeAudioSessionPort session;
+  late FakeConnectivityPort connectivity;
 
   setUp(() {
     player = FakeStreamPlayer();
     session = FakeAudioSessionPort();
+    connectivity = FakeConnectivityPort();
   });
 
   (RadioAudioHandler, _RecordingResolver) build(http.Client client) {
@@ -113,6 +115,7 @@ void main() {
       directory,
       resolver,
       _english,
+      connectivity,
     );
     addTearDown(handler.dispose);
     return (handler, resolver);
@@ -654,6 +657,7 @@ void main() {
         rotationDirectory,
         resolver,
         _english,
+        connectivity,
       );
       addTearDown(handler.dispose);
       return handler;
@@ -999,6 +1003,7 @@ void main() {
         StationDirectory([a, b, c]),
         resolver,
         _english,
+        connectivity,
       );
       addTearDown(handler.dispose);
       engine = AudioServiceEngine(handler);
@@ -1123,6 +1128,7 @@ void main() {
               directory,
               FakeStreamResolver(),
               _english,
+              connectivity,
             )
           : RadioAudioHandler(
               player,
@@ -1130,6 +1136,7 @@ void main() {
               directory,
               FakeStreamResolver(),
               _english,
+              connectivity,
               initialRetryBudget: initial,
             );
       addTearDown(handler.dispose);
@@ -1209,6 +1216,7 @@ void main() {
           reconnectDirectory,
           resolver,
           _english,
+          connectivity,
           reconnectPolicy: ReconnectPolicy(Random(0), jitter: 0),
         );
         addTearDown(handler.dispose);
@@ -1545,4 +1553,294 @@ void main() {
       });
     },
   );
+  group('network changes and offline periods (PLAY-07, PLAY-10, D-10), '
+      'under fakeAsync', () {
+    final only = StationStream(
+      url: Uri.parse('https://only.example/live.mp3'),
+      kind: StreamKind.progressive,
+    );
+    final station = Station(
+      id: StationId.debug('net'),
+      name: 'Мрежа',
+      nameLatin: 'Mrezha',
+      streams: [only],
+    );
+    final netDirectory = StationDirectory([station]);
+
+    late FakeStreamResolver resolver;
+
+    /// Built inside the fakeAsync zone; no jitter.
+    RadioAudioHandler handlerWith() {
+      resolver = FakeStreamResolver();
+      final handler = RadioAudioHandler(
+        player,
+        session,
+        netDirectory,
+        resolver,
+        _english,
+        connectivity,
+        reconnectPolicy: ReconnectPolicy(Random(0), jitter: 0),
+      );
+      addTearDown(handler.dispose);
+      return handler;
+    }
+
+    void ready(FakeAsync async) {
+      player.emitSnapshot(
+        PlayerProcessingState.ready,
+        playing: true,
+        generation: player.lastLoad.generation,
+      );
+      async.flushMicrotasks();
+    }
+
+    RadioAudioHandler playing(FakeAsync async) {
+      final handler = handlerWith();
+      async.flushMicrotasks();
+      unawaited(handler.playFromMediaId(_mediaId(station)));
+      async.flushMicrotasks();
+      ready(async);
+      expect(handler.status, isA<Playing>());
+      return handler;
+    }
+
+    void emit(FakeAsync async, {required bool online, bool changed = false}) {
+      connectivity.emit(online: online, networkChanged: changed);
+      async.flushMicrotasks();
+    }
+
+    void buffered(FakeAsync async, int ms) {
+      player.emitBuffered(
+        Duration(milliseconds: ms),
+        generation: player.lastLoad.generation,
+      );
+      async.flushMicrotasks();
+    }
+
+    Matcher waiting() => isA<Reconnecting>().having(
+      (r) => r.waitingForNetwork,
+      'waitingForNetwork',
+      isTrue,
+    );
+
+    test('the handler asks isOnline once at start and seeds the state: '
+        'offline at start, a drop waits for the network', () {
+      fakeAsync((async) {
+        connectivity.online = false;
+        final handler = playing(async);
+        expect(connectivity.isOnlineCalls, 1);
+        player.emitFailure(generation: player.lastLoad.generation);
+        async.elapse(const Duration(minutes: 1));
+        expect(handler.status, waiting());
+        expect(player.loads, hasLength(1));
+      });
+    });
+
+    test('airplane mode: offline, the drop waits without retrying and the '
+        'notification stays up; back online -> a fresh load at once, then '
+        'Playing', () {
+      fakeAsync((async) {
+        final handler = playing(async);
+        emit(async, online: false);
+        expect(handler.status, isA<Playing>());
+        player.emitFailure(generation: player.lastLoad.generation);
+        async.flushMicrotasks();
+        expect(handler.status, waiting());
+        final state = handler.playbackState.value;
+        expect(state.playing, isTrue);
+        expect(state.processingState, AudioProcessingState.buffering);
+        expect(handler.mediaItem.value?.displaySubtitle, 'Reconnecting…');
+        expect(handler.currentDiagnostics.nextRetryDelay, isNull);
+
+        async.elapse(const Duration(minutes: 1));
+        expect(player.loads, hasLength(1));
+        expect(session.releaseCalls, 0);
+
+        final stops = player.stopCalls;
+        emit(async, online: true);
+        expect(player.loads, hasLength(2));
+        expect(player.lastLoad.uri, only.url);
+        expect(handler.status, isA<Connecting>());
+        expect(handler.playbackState.value.playing, isTrue);
+        expect(player.stopCalls, greaterThanOrEqualTo(stops));
+        ready(async);
+        expect(handler.status, isA<Playing>());
+      });
+    });
+
+    test('Wi-Fi to 4G while Playing: buffered position stuck for 5 s -> an '
+        'immediate reload', () {
+      fakeAsync((async) {
+        final handler = playing(async);
+        buffered(async, 4000);
+        emit(async, online: true, changed: true);
+        async.elapse(const Duration(milliseconds: 4900));
+        expect(player.loads, hasLength(1));
+        async.elapse(const Duration(milliseconds: 200));
+        expect(player.loads, hasLength(2));
+        expect(handler.status, isA<Connecting>());
+        expect(handler.playbackState.value.playing, isTrue);
+      });
+    });
+
+    test('Wi-Fi to 4G while Playing: audio still arriving -> nothing is '
+        'reloaded', () {
+      fakeAsync((async) {
+        final handler = playing(async);
+        buffered(async, 4000);
+        emit(async, online: true, changed: true);
+        async.elapse(const Duration(seconds: 2));
+        buffered(async, 6000);
+        async.elapse(const Duration(minutes: 1));
+        expect(player.loads, hasLength(1));
+        expect(handler.status, isA<Playing>());
+      });
+    });
+
+    test('a network change while Reconnecting retries at once (no waiting '
+        'for the backoff)', () {
+      fakeAsync((async) {
+        final handler = playing(async);
+        player.onLoad = (_, generation) =>
+            scheduleMicrotask(() => player.emitFailure(generation: generation));
+        player.emitFailure(generation: player.lastLoad.generation);
+        async.elapse(const Duration(seconds: 3));
+        // Retries at 0 and 1 s failed; the next waits 4 s.
+        expect(handler.status, isA<Reconnecting>());
+        final loads = player.loads.length;
+        player.onLoad = null;
+        emit(async, online: true, changed: true);
+        expect(player.loads, hasLength(loads + 1));
+        ready(async);
+        expect(handler.status, isA<Playing>());
+      });
+    });
+
+    test('standard offline budget: 10 min offline -> Error(offline), focus '
+        'released, playing false (no foreground service), nothing after', () {
+      fakeAsync((async) {
+        final handler = playing(async);
+        emit(async, online: false);
+        player.emitFailure(generation: player.lastLoad.generation);
+        async.elapse(const Duration(minutes: 9, seconds: 59));
+        expect(handler.status, waiting());
+        expect(player.loads, hasLength(1));
+
+        async.elapse(const Duration(seconds: 1));
+        expect(
+          handler.status,
+          PlaybackStatus.error(
+            station: station,
+            kind: PlaybackErrorKind.offline,
+          ),
+        );
+        final state = handler.playbackState.value;
+        expect(state.playing, isFalse);
+        expect(state.processingState, AudioProcessingState.error);
+        expect(session.releaseCalls, 1);
+
+        // Coming back online later starts nothing (PLAY-10).
+        emit(async, online: true, changed: true);
+        async.elapse(const Duration(minutes: 10));
+        expect(player.loads, hasLength(1));
+        expect(handler.status, isA<PlaybackError>());
+      });
+    });
+
+    test('idempotency: the stall timer and a network change in the same '
+        'tick start exactly one fresh connection', () {
+      fakeAsync((async) {
+        playing(async);
+        player.emitSnapshot(
+          PlayerProcessingState.buffering,
+          playing: true,
+          generation: player.lastLoad.generation,
+        );
+        async.flushMicrotasks();
+        // Fires at the same fake instant as the 8 s stall timer.
+        Timer(
+          const Duration(seconds: 8),
+          () => connectivity.emit(online: true, networkChanged: true),
+        );
+        async.elapse(const Duration(seconds: 8));
+        async.elapse(const Duration(seconds: 1));
+        expect(player.loads, hasLength(2));
+      });
+    });
+
+    test('online while Connecting does not restart the connection', () {
+      fakeAsync((async) {
+        final handler = handlerWith();
+        async.flushMicrotasks();
+        final gate = Completer<void>();
+        resolver.script(only.url, ResolveScript(gate: gate.future));
+        unawaited(handler.playFromMediaId(_mediaId(station)));
+        async.flushMicrotasks();
+        expect(handler.status, isA<Connecting>());
+        emit(async, online: true, changed: true);
+        emit(async, online: false);
+        emit(async, online: true);
+        gate.complete();
+        async.flushMicrotasks();
+        expect(player.loads, hasLength(1));
+        expect(resolver.resolveCalls, hasLength(1));
+      });
+    });
+
+    for (final (label, command) in [
+      ('pause', (RadioAudioHandler h) => h.pause()),
+      ('stop', (RadioAudioHandler h) => h.stop()),
+    ]) {
+      test('after a user $label, connectivity events start nothing '
+          '(PLAY-10)', () {
+        fakeAsync((async) {
+          final handler = playing(async);
+          unawaited(command(handler));
+          async.flushMicrotasks();
+          final status = handler.status;
+          emit(async, online: false);
+          emit(async, online: true);
+          emit(async, online: true, changed: true);
+          async.elapse(const Duration(minutes: 15));
+          expect(player.loads, hasLength(1));
+          expect(handler.status, status);
+          expect(handler.playbackState.value.playing, isFalse);
+        });
+      });
+    }
+
+    test('pause while waiting for the network cancels the offline budget: '
+        'still Paused 15 min later, no error', () {
+      fakeAsync((async) {
+        final handler = playing(async);
+        emit(async, online: false);
+        player.emitFailure(generation: player.lastLoad.generation);
+        async.elapse(const Duration(minutes: 1));
+        expect(handler.status, waiting());
+        unawaited(handler.pause());
+        async.flushMicrotasks();
+        async.elapse(const Duration(minutes: 15));
+        expect(handler.status, PlaybackStatus.paused(station: station));
+        emit(async, online: true, changed: true);
+        async.elapse(const Duration(minutes: 1));
+        expect(player.loads, hasLength(1));
+      });
+    });
+
+    test('buffered positions do not flood the diagnostics log; connectivity '
+        'changes are logged', () {
+      fakeAsync((async) {
+        final handler = playing(async);
+        for (var i = 1; i <= 100; i++) {
+          buffered(async, i * 500);
+        }
+        emit(async, online: false);
+        final messages = [
+          for (final e in handler.currentDiagnostics.recentEvents) e.message,
+        ];
+        expect(messages.where((m) => m.contains('BufferedPosition')), isEmpty);
+        expect(messages.last, startsWith('ConnectivityChanged(offline)'));
+      });
+    });
+  });
 }

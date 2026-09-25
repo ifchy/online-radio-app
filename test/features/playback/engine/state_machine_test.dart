@@ -1285,4 +1285,576 @@ void main() {
       expect(t.commands, isEmpty);
     });
   });
+  group('connectivity, the flow check and the offline budget (PLAY-07, '
+      'PLAY-10, D-10)', () {
+    const sec = Duration(seconds: 1);
+    const min = Duration(minutes: 1);
+    const stopAll = [
+      CancelAllTimers(),
+      ClearNowPlaying(),
+      StopTransport(),
+      ReleaseFocus(),
+    ];
+
+    EngineState net(
+      EngineState s, {
+      required bool online,
+      bool changed = false,
+      DateTime? at,
+    }) => _run(
+      s,
+      ConnectivityChanged(online: online, networkChanged: changed),
+      at,
+    ).next;
+
+    EngineState playing() => _playing(_started(_three));
+
+    /// Playing, then the server drops it at [at].
+    EngineState dropped(EngineState s, [DateTime? at]) =>
+        _run(s, PlayerFailed(s.generation, 0), at).next;
+
+    int loadsAndResolves(List<EngineCommand> commands) =>
+        commands.where((c) => c is Load || c is Resolve).length;
+
+    test('the network state starts online', () {
+      expect(const EngineState.initial().online, isTrue);
+    });
+
+    test('offline while Playing: only the flag changes (the buffer may still '
+        'play); the stall watchdog or a failure takes it from there', () {
+      final s = playing();
+      final t = _run(s, const ConnectivityChanged(online: false));
+      expect(t.next.status, s.status);
+      expect(t.next.online, isFalse);
+      expect(t.commands, isEmpty);
+    });
+
+    test('a drop while offline: Reconnecting(waitingForNetwork) with no '
+        'backoff timer, and the budget timer armed for the offline budget '
+        '(10 min standard)', () {
+      final s = net(playing(), online: false);
+      final t = _run(s, PlayerFailed(s.generation, 0));
+      final g = s.generation + 1;
+      expect(
+        t.next.status,
+        PlaybackStatus.reconnecting(
+          station: _three,
+          attempt: 0,
+          waitingForNetwork: true,
+        ),
+      );
+      expect(t.commands, [
+        const CancelAllTimers(),
+        const ClearNowPlaying(),
+        const StopTransport(),
+        InvalidateResolution(_s0),
+        StartTimer(TimerKind.budget, const Duration(minutes: 10), g),
+      ]);
+      expect(t.commands.whereType<StartTimer>().map((c) => c.kind), [
+        TimerKind.budget,
+      ]);
+      expect(t.next.budget.running, isTrue);
+      expect(playbackStateFor(t.next.status).playing, isTrue);
+    });
+
+    test('offline while Reconnecting between retries: the backoff stops, '
+        'waitingForNetwork, the budget re-armed for the offline budget', () {
+      var s = dropped(playing());
+      s = _run(s, TimerFired(TimerKind.backoff, s.generation)).next;
+      s = _failCurrent(s); // the retry round fails: Reconnecting(attempt 1)
+      expect(s.status, isA<Reconnecting>());
+      final at = _t0.add(sec * 20);
+      final t = _run(s, const ConnectivityChanged(online: false), at);
+      final g = s.generation + 1;
+      expect(
+        t.next.status,
+        PlaybackStatus.reconnecting(
+          station: _three,
+          attempt: s.attempt,
+          waitingForNetwork: true,
+        ),
+      );
+      expect(t.next.generation, g);
+      expect(t.commands, [
+        const CancelAllTimers(),
+        const ClearNowPlaying(),
+        const StopTransport(),
+        StartTimer(TimerKind.budget, const Duration(minutes: 10), g),
+      ]);
+      // The old backoff timer is stale now.
+      final late = _run(t.next, TimerFired(TimerKind.backoff, s.generation));
+      expect(late.next, same(t.next));
+      expect(late.commands, isEmpty);
+    });
+
+    test('offline while a retry is connecting: the retry is abandoned and '
+        'its late result never loads', () {
+      var s = dropped(playing());
+      s = _run(s, TimerFired(TimerKind.backoff, s.generation)).next;
+      expect(s.status, isA<Connecting>());
+      final retry = s.generation;
+      final t = _run(s, const ConnectivityChanged(online: false));
+      expect(
+        t.next.status,
+        isA<Reconnecting>().having(
+          (r) => r.waitingForNetwork,
+          'waitingForNetwork',
+          isTrue,
+        ),
+      );
+      expect(t.commands, contains(const StopTransport()));
+      final late = _run(
+        t.next,
+        Resolved(retry, [_candidate('http://late.example/')]),
+      );
+      expect(late.next, same(t.next));
+      expect(late.commands, isEmpty);
+    });
+
+    test('back online while waiting: Connecting at once from the stream that '
+        'last worked, the backoff reset, a fresh load at the live edge', () {
+      var s = _started(_three);
+      s = _failCurrent(s); // stream 0 dead
+      s = _playing(s); // stream 1 plays
+      s = net(s, online: false);
+      s = dropped(s);
+      expect(s.status, isA<Reconnecting>());
+      final at = _t0.add(min * 2);
+      final t = _run(s, const ConnectivityChanged(online: true), at);
+      final g = s.generation + 1;
+      expect(
+        t.next.status,
+        PlaybackStatus.connecting(station: _three, streamIndex: 1, round: 0),
+      );
+      expect(t.next.generation, g);
+      expect(t.next.attempt, 1);
+      expect(t.next.online, isTrue);
+      expect(t.commands, [
+        const CancelAllTimers(),
+        StartTimer(TimerKind.budget, const Duration(minutes: 3), g),
+        StartTimer(TimerKind.connect, _timeout, g),
+        Resolve(_s1, g),
+      ]);
+      final r = _run(
+        t.next,
+        Resolved(g, [_candidate('http://two.example/fallback.aac#c0')]),
+        at,
+      );
+      expect(r.commands, [
+        Load(_candidate('http://two.example/fallback.aac#c0'), g),
+      ]);
+    });
+
+    test('a network change while Reconnecting (online, deep in the backoff): '
+        'retry now and reset the backoff', () {
+      var s = dropped(playing());
+      for (var i = 0; i < 4; i++) {
+        s = _run(s, TimerFired(TimerKind.backoff, s.generation)).next;
+        s = _failCurrent(s);
+      }
+      expect(s.status, isA<Reconnecting>());
+      expect(s.attempt, 4);
+      final t = _run(
+        s,
+        const ConnectivityChanged(online: true, networkChanged: true),
+      );
+      expect(t.next.status, isA<Connecting>());
+      expect(t.next.attempt, 1);
+      expect(loadsAndResolves(t.commands), 1);
+      // If it fails, the next wait is the second step (1 s), not 15 s.
+      final failed = _failCurrent(t.next);
+      expect(failed.status, isA<Reconnecting>());
+      final wait = (failed.status as Reconnecting).nextAttemptAt;
+      expect(wait, _t0.add(sec));
+    });
+
+    test('online while Reconnecting and already online (no change): '
+        'nothing', () {
+      final s = dropped(playing());
+      final t = _run(s, const ConnectivityChanged(online: true));
+      expect(t.next.status, s.status);
+      expect(t.next.generation, s.generation);
+      expect(t.commands, isEmpty);
+    });
+
+    test('a network change while Buffering: reload at once at the live edge '
+        '(no waiting for the stall watchdog)', () {
+      var s = playing();
+      s = _run(
+        s,
+        PlayerStateChanged(
+          s.generation,
+          PlayerProcessingState.buffering,
+          playing: true,
+        ),
+      ).next;
+      final t = _run(
+        s,
+        const ConnectivityChanged(online: true, networkChanged: true),
+      );
+      final g = s.generation + 1;
+      expect(
+        t.next.status,
+        PlaybackStatus.connecting(station: _three, streamIndex: 0, round: 0),
+      );
+      expect(t.commands, [
+        const CancelAllTimers(),
+        const ClearNowPlaying(),
+        const StopTransport(),
+        StartTimer(TimerKind.budget, const Duration(minutes: 3), g),
+        StartTimer(TimerKind.connect, _timeout, g),
+        Resolve(_s0, g),
+      ]);
+      expect(t.next.budget.running, isTrue);
+      // The URL was fine: nothing is invalidated.
+      expect(t.commands.whereType<InvalidateResolution>(), isEmpty);
+    });
+
+    group('the flow check after a network change while Playing', () {
+      EngineState buffered(EngineState s, int ms) => _run(
+        s,
+        BufferedPositionChanged(s.generation, Duration(milliseconds: ms)),
+      ).next;
+
+      test('a network change arms a 5 s flow check and changes nothing '
+          'else', () {
+        final s = buffered(playing(), 4000);
+        final t = _run(
+          s,
+          const ConnectivityChanged(online: true, networkChanged: true),
+        );
+        expect(t.next.status, s.status);
+        expect(t.next.flowCheckBaseline, const Duration(milliseconds: 4000));
+        expect(t.commands, [
+          StartTimer(
+            TimerKind.flowCheck,
+            const Duration(seconds: 5),
+            s.generation,
+          ),
+        ]);
+      });
+
+      test('no progress when it fires: reload at once', () {
+        var s = buffered(playing(), 4000);
+        s = net(s, online: true, changed: true);
+        final t = _run(
+          s,
+          TimerFired(TimerKind.flowCheck, s.generation),
+          _t0.add(sec * 5),
+        );
+        expect(t.next.status, isA<Connecting>());
+        expect(t.commands, contains(const StopTransport()));
+        expect(loadsAndResolves(t.commands), 1);
+      });
+
+      test('progress when it fires: nothing happens', () {
+        var s = buffered(playing(), 4000);
+        s = net(s, online: true, changed: true);
+        s = buffered(s, 4500);
+        final t = _run(s, TimerFired(TimerKind.flowCheck, s.generation));
+        expect(t.next.status, s.status);
+        expect(t.next.flowCheckBaseline, isNull);
+        expect(t.commands, isEmpty);
+      });
+
+      test('nothing buffered before the change but positions since: '
+          'progress', () {
+        var s = net(playing(), online: true, changed: true);
+        s = buffered(s, 800);
+        final t = _run(s, TimerFired(TimerKind.flowCheck, s.generation));
+        expect(t.next.status, isA<Playing>());
+        expect(t.commands, isEmpty);
+      });
+
+      test('positions from an older load are not progress', () {
+        var s = buffered(playing(), 4000);
+        s = net(s, online: true, changed: true);
+        s = _run(
+          s,
+          BufferedPositionChanged(s.generation - 1, const Duration(minutes: 1)),
+        ).next;
+        final t = _run(s, TimerFired(TimerKind.flowCheck, s.generation));
+        expect(t.next.status, isA<Connecting>());
+      });
+
+      test('a stale flow check changes nothing', () {
+        var s = buffered(playing(), 4000);
+        s = net(s, online: true, changed: true);
+        final t = _run(s, TimerFired(TimerKind.flowCheck, s.generation - 1));
+        expect(t.next, same(s));
+        expect(t.commands, isEmpty);
+      });
+
+      test('offline when the check finds no progress: waiting for the '
+          'network, not a retry', () {
+        var s = buffered(playing(), 4000);
+        s = net(s, online: true, changed: true);
+        s = net(s, online: false);
+        final t = _run(s, TimerFired(TimerKind.flowCheck, s.generation));
+        expect(
+          t.next.status,
+          isA<Reconnecting>().having(
+            (r) => r.waitingForNetwork,
+            'waitingForNetwork',
+            isTrue,
+          ),
+        );
+        expect(loadsAndResolves(t.commands), 0);
+      });
+    });
+
+    group('the offline budget', () {
+      test('standard: 10 min offline -> PlaybackError(offline) with '
+          'everything released and playing false', () {
+        var s = net(playing(), online: false);
+        s = dropped(s, _t0);
+        final early = _run(
+          s,
+          TimerFired(TimerKind.budget, s.generation),
+          _t0.add(min * 10 - sec),
+        );
+        expect(early.next.status, isA<Reconnecting>());
+        expect(early.commands, [
+          StartTimer(TimerKind.budget, sec, s.generation),
+        ]);
+
+        final t = _run(
+          s,
+          TimerFired(TimerKind.budget, s.generation),
+          _t0.add(min * 10),
+        );
+        expect(
+          t.next.status,
+          PlaybackStatus.error(
+            station: _three,
+            kind: PlaybackErrorKind.offline,
+          ),
+        );
+        expect(
+          t.commands,
+          containsAllInOrder(<EngineCommand>[
+            const CancelAllTimers(),
+            const StopTransport(),
+            const ReleaseFocus(),
+          ]),
+        );
+        expect(playbackStateFor(t.next.status).playing, isFalse);
+        expect(t.next.budget.active, isFalse);
+      });
+
+      test('offline time counts only against the offline budget: 2 min '
+          'failing online, 8 min offline, then back online leaves 1 min of '
+          'the online budget', () {
+        var s = dropped(playing(), _t0);
+        s = net(s, online: false, at: _t0.add(min * 2));
+        final t = _run(
+          s,
+          const ConnectivityChanged(online: true),
+          _t0.add(min * 10),
+        );
+        expect(t.next.status, isA<Connecting>());
+        expect(
+          t.commands,
+          contains(StartTimer(TimerKind.budget, min, t.next.generation)),
+        );
+      });
+
+      test('the budget timer is re-armed for the other budget whenever the '
+          'network flag changes during an outage', () {
+        var s = dropped(playing(), _t0);
+        s = _run(s, TimerFired(TimerKind.backoff, s.generation)).next;
+        expect(s.status, isA<Connecting>());
+        // Going offline abandons the retry: waiting, 10 min offline budget.
+        final t = _run(
+          s,
+          const ConnectivityChanged(online: false),
+          _t0.add(sec * 30),
+        );
+        expect(
+          t.commands.whereType<StartTimer>().single,
+          StartTimer(
+            TimerKind.budget,
+            const Duration(minutes: 10),
+            t.next.generation,
+          ),
+        );
+      });
+    });
+
+    group('idempotency: one outage, one fresh connection', () {
+      test('the stall timer, then a network change at the same moment: one '
+          'Resolve, and the pending immediate retry is stale', () {
+        var s = playing();
+        s = _run(
+          s,
+          PlayerStateChanged(
+            s.generation,
+            PlayerProcessingState.buffering,
+            playing: true,
+          ),
+        ).next;
+        final commands = <EngineCommand>[];
+        var t = _run(s, TimerFired(TimerKind.stall, s.generation));
+        commands.addAll(t.commands);
+        final backoffGeneration = t.next.generation;
+        t = _run(
+          t.next,
+          const ConnectivityChanged(online: true, networkChanged: true),
+        );
+        commands.addAll(t.commands);
+        expect(t.next.status, isA<Connecting>());
+        t = _run(t.next, TimerFired(TimerKind.backoff, backoffGeneration));
+        commands.addAll(t.commands);
+        expect(loadsAndResolves(commands), 1);
+      });
+
+      test('a network change, then the stall timer at the same moment: one '
+          'Resolve', () {
+        var s = playing();
+        s = _run(
+          s,
+          PlayerStateChanged(
+            s.generation,
+            PlayerProcessingState.buffering,
+            playing: true,
+          ),
+        ).next;
+        final commands = <EngineCommand>[];
+        var t = _run(
+          s,
+          const ConnectivityChanged(online: true, networkChanged: true),
+        );
+        commands.addAll(t.commands);
+        t = _run(t.next, TimerFired(TimerKind.stall, s.generation));
+        commands.addAll(t.commands);
+        expect(t.next.status, isA<Connecting>());
+        expect(loadsAndResolves(commands), 1);
+      });
+
+      test('online or a network change while Connecting: no new load', () {
+        for (final s in [
+          _started(_three),
+          _run(
+            dropped(playing()),
+            TimerFired(TimerKind.backoff, dropped(playing()).generation),
+          ).next,
+        ]) {
+          expect(s.status, isA<Connecting>());
+          for (final event in const [
+            ConnectivityChanged(online: true),
+            ConnectivityChanged(online: true, networkChanged: true),
+          ]) {
+            final t = _run(s, event);
+            expect(t.next.status, s.status, reason: '$event');
+            expect(t.next.generation, s.generation, reason: '$event');
+            expect(loadsAndResolves(t.commands), 0, reason: '$event');
+            expect(
+              t.commands.whereType<StopTransport>(),
+              isEmpty,
+              reason: '$event',
+            );
+          }
+        }
+      });
+    });
+
+    group('after a user pause or stop, and in an error, connectivity starts '
+        'nothing (PLAY-10)', () {
+      final states = <String, EngineState>{
+        'Paused': _run(playing(), const UserPause()).next,
+        'Idle': _run(playing(), const UserStop()).next,
+        'Idle (never played)': const EngineState.initial(),
+      };
+      states['PlaybackError'] = () {
+        var s = net(playing(), online: false);
+        s = dropped(s, _t0);
+        return _run(
+          s,
+          TimerFired(TimerKind.budget, s.generation),
+          _t0.add(min * 10),
+        ).next;
+      }();
+
+      for (final MapEntry(key: label, value: s) in states.entries) {
+        for (final event in const [
+          ConnectivityChanged(online: true),
+          ConnectivityChanged(online: true, networkChanged: true),
+          ConnectivityChanged(online: false),
+        ]) {
+          test('$label + $event: no commands', () {
+            final base = event.online ? net(s, online: false) : s;
+            final t = _run(base, event);
+            expect(t.next.status, base.status);
+            expect(t.commands, isEmpty);
+            expect(t.next.online, event.online);
+          });
+        }
+      }
+
+      test('UserPause while waiting for the network cancels the budget timer '
+          'and ends the outage', () {
+        var s = net(playing(), online: false);
+        s = dropped(s, _t0);
+        final t = _run(s, const UserPause());
+        expect(t.next.status, PlaybackStatus.paused(station: _three));
+        expect(t.commands, stopAll);
+        expect(t.next.budget.active, isFalse);
+        final late = _run(
+          t.next,
+          TimerFired(TimerKind.budget, s.generation),
+          _t0.add(min * 11),
+        );
+        expect(late.next, same(t.next));
+        expect(late.commands, isEmpty);
+        // Coming back online later does not resume it.
+        final back = _run(t.next, const ConnectivityChanged(online: true));
+        expect(back.next.status, t.next.status);
+        expect(back.commands, isEmpty);
+      });
+    });
+
+    test('a station that never played, given up while offline, reports '
+        'offline', () {
+      var s = net(const EngineState.initial(), online: false);
+      s = _run(s, UserPlay(_three)).next;
+      for (var i = 0; i < 6; i++) {
+        s = _failCurrent(s);
+      }
+      expect(
+        s.status,
+        PlaybackStatus.error(station: _three, kind: PlaybackErrorKind.offline),
+      );
+    });
+
+    test('a backoff that fires while offline waits for the network instead '
+        'of retrying', () {
+      final s = dropped(playing());
+      final offline = s.copyWith(
+        budget: s.budget.onConnectivity(_t0, online: false),
+      );
+      final t = _run(offline, TimerFired(TimerKind.backoff, s.generation));
+      expect(
+        t.next.status,
+        isA<Reconnecting>().having(
+          (r) => r.waitingForNetwork,
+          'waitingForNetwork',
+          isTrue,
+        ),
+      );
+      expect(loadsAndResolves(t.commands), 0);
+    });
+
+    test('describeStatus marks a wait for the network', () {
+      expect(
+        describeStatus(
+          PlaybackStatus.reconnecting(
+            station: _three,
+            attempt: 2,
+            waitingForNetwork: true,
+          ),
+        ),
+        'Reconnecting(attempt 2, waiting for network)',
+      );
+    });
+  });
 }
