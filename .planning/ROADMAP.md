@@ -37,12 +37,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. A phone call with the screen off pauses the radio, and it resumes after hang-up. Navigation prompts duck the audio. Unplugging headphones or disconnecting Bluetooth pauses it. Resuming after a 5-minute user pause plays live audio, not stale buffer. Nothing restarts playback that the user paused or stopped.
   5. The app installs on Android 7.0 (minSdk 24) through current Android (target 36). Every PR runs `flutter analyze` and `flutter test` in CI, version tags produce a signed release AAB, and no key or secret exists in the public repo. The first-launch date is stored on the very first run, and no tracking SDK is present.
 
-**Plans**: 13 plans (8 waves)
+**Plans**: 1/13 plans executed (8 waves)
 
 Plans:
 **Wave 1**
 
-- [ ] 01-01-PLAN.md — Walking skeleton tracer: tap БГ Радио → hear it screen-off in a release build with notification, lock-screen and headset controls (blocking owner gate)
+- [x] 01-01-PLAN.md — Walking skeleton tracer: tap БГ Радио → hear it screen-off in a release build with notification, lock-screen and headset controls (blocking owner gate)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -141,7 +141,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Playback Engine & Walking Skeleton | 0/TBD | Not started | - |
+| 1. Playback Engine & Walking Skeleton | 1/13 | In Progress|  |
 | 2. Station Catalogue, Search & Browse | 0/TBD | Not started | - |
 | 3. Listening Experience | 0/TBD | Not started | - |
 | 4. Hardening, Closed Testing & Store Release | 0/TBD | Not started | - |

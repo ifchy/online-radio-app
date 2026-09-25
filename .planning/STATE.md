@@ -4,16 +4,16 @@ milestone: v1.0
 current_phase: 01
 current_phase_name: Playback Engine & Walking Skeleton
 status: executing
-stopped_at: Phase 1 context gathered
-last_updated: "2026-09-25T12:39:03.629Z"
+stopped_at: Completed 01-01-PLAN.md
+last_updated: "2026-09-25T14:43:47.802Z"
 last_activity: 2026-09-25
-last_activity_desc: Phase 01 execution started
-state_head: 6618ddf692d9b176897886b2002cb9d17e275036
+last_activity_desc: Completed 01-01 walking skeleton
+state_head: 836cee5ce76c9cf427a6856e073feb19e12ae4a7
 progress:
   total_phases: 4
   completed_phases: 0
   total_plans: 13
-  completed_plans: 0
+  completed_plans: 1
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-09-24)
 ## Current Position
 
 Phase: 01 (Playback Engine & Walking Skeleton) — EXECUTING
-Plan: 1 of 13
-Status: Executing Phase 01
-Last activity: 2026-09-25 — Phase 01 execution started
+Plan: 2 of 13
+Status: Ready to execute
+Last activity: 2026-09-25 — Completed 01-01 walking skeleton (owner approved tracer on a release build)
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [█░░░░░░░░░] 8% (1/13 plans in Phase 01)
 
 ## Performance Metrics
 
@@ -55,6 +55,12 @@ Progress: [░░░░░░░░░░] 0%
 
 *Updated after each plan completion*
 
+**Per-Plan Metrics:**
+
+| Plan | Duration | Tasks | Files |
+|------|----------|-------|-------|
+| Phase 01 P01 | 2h 3m | 1 tasks | 53 files |
+
 ## Accumulated Context
 
 ### Decisions
@@ -66,6 +72,11 @@ Recent decisions affecting current work:
 - [Roadmap]: The brief's "store release" phase is folded into Phase 4, because the Play closed track needs the privacy policy, Data safety, content rating, listing and FGS declaration on day one of Phase 4
 - [Roadmap]: Fallback-stream rotation lives in the Phase 1 state machine (not in hardening); user-facing error UX (PLAY-09) is in Phase 4
 - [Roadmap]: Next/prev (PLAY-04) is user-complete in Phase 3 (needs favourites order); the engine API for it is shaped in Phase 1
+- [Phase 01]: [01-01]: android/app/src/main/res/raw/keep.xml keeps @drawable/audio_service_* in release builds; never remove it (audio_service resolves icons by name, shrinking strips them, the Android 13+ Stop CustomAction then throws and the FGS never starts)
+- [Phase 01]: [01-01]: Every release-only behaviour (shrinking, manifest, FGS, cleartext) must be verified on a physical device in a release build; unit tests and debug builds cannot catch it
+- [Phase 01]: [01-01]: RadioAudioHandler keeps an in-memory last station: play() from Idle restarts it live and getChildren(recentRootId) returns it, so the Android media card resumes after Stop; persisted last-station comes later
+- [Phase 01]: [01-01]: bootstrap.dart logs AudioService.asyncError, which audio_service otherwise swallows
+- [Phase 01]: [01-01]: Completed while Playing/Buffering maps to PlaybackError(streamUnreachable) so no FGS runs without audio, until 01-09 adds reconnect
 
 ### Pending Todos
 
@@ -89,6 +100,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-09-25T09:45:04.048Z
-Stopped at: Phase 1 context gathered
-Resume file: .planning/phases/01-playback-engine-walking-skeleton/01-CONTEXT.md
+Last session: 2026-09-25T14:43:33.589Z
+Stopped at: Completed 01-01-PLAN.md
+Resume file: None
