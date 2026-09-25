@@ -2,6 +2,7 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../../catalog/domain/station.dart';
 import '../domain/audio_engine.dart';
+import '../domain/now_playing.dart';
 import '../domain/playback_status.dart';
 
 part 'playback_providers.g.dart';
@@ -21,3 +22,8 @@ Stream<PlaybackStatus> playbackStatus(Ref ref) =>
 @Riverpod(keepAlive: true)
 Stream<Station?> currentStation(Ref ref) =>
     ref.watch(audioEngineProvider).currentStation;
+
+/// Read-only mirror of the engine's now-playing value (ICY), or null.
+@Riverpod(keepAlive: true)
+Stream<NowPlaying?> nowPlaying(Ref ref) =>
+    ref.watch(audioEngineProvider).nowPlaying;

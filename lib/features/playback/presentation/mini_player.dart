@@ -7,7 +7,7 @@ import '../domain/playback_status.dart';
 import 'state_label.dart';
 
 /// The bottom mini-player (D-06): the current station, its state label
-/// (D-09), play/pause and stop. It has no seek bar and no position (PLAY-11):
+/// (D-09) or, while playing, what is on air (ICY), play/pause and stop. It has no seek bar and no position (PLAY-11):
 /// live radio has neither.
 ///
 /// It builds nothing while there is no current station, so it disappears
@@ -22,10 +22,16 @@ class MiniPlayer extends ConsumerWidget {
     final station = ref.watch(currentStationProvider).value;
     final status =
         ref.watch(playbackStatusProvider).value ?? const PlaybackStatus.idle();
+    final nowPlaying = ref.watch(nowPlayingProvider).value;
     if (station == null) return const SizedBox.shrink();
     final l = AppLocalizations.of(context);
     final theme = Theme.of(context);
-    final label = stateLabelFor(status, l);
+    // The second line: the state label whenever the player is not simply
+    // playing (D-09); while Playing, the station's now-playing text (ICY),
+    // the same line the notification shows, or nothing.
+    final label =
+        stateLabelFor(status, l) ??
+        (status is Playing ? nowPlaying?.text : null);
     final pausable = _engineWouldPause(status);
 
     return Semantics(
@@ -58,8 +64,8 @@ class MiniPlayer extends ConsumerWidget {
                           style: theme.textTheme.titleMedium,
                         ),
                       ),
-                      // Always present, so TalkBack announces the label when
-                      // it appears or changes.
+                      // Always present, so TalkBack announces the label or
+                      // the now-playing text when it appears or changes.
                       Semantics(
                         container: true,
                         liveRegion: true,
