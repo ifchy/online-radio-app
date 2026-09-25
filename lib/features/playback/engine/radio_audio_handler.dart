@@ -48,6 +48,10 @@ import 'state_machine.dart';
 ///   the station is given up when the retry budget (D-10) is used up
 ///   (PLAY-07).
 /// - Focus is released on pause, stop and error (Pitfall F).
+/// - The Wi-Fi lock is derived from the state after every transition: held
+///   in Connecting, Playing, Buffering and Reconnecting, released otherwise
+///   (PLAT-03, PLAT-06). A swipe from recents while nothing plays stops the
+///   service ([onTaskRemoved]).
 /// - Now-playing (ICY) is cleared on every start, pause, stop and error, and
 ///   only titles from the current load after it is ready are shown
 ///   (Pitfall E).
@@ -109,8 +113,6 @@ class RadioAudioHandler extends BaseAudioHandler {
   final StreamResolver _resolver;
   final EngineStrings _strings;
   final ConnectivityPort _connectivity;
-  // RED scaffolding (01-13 Task 2): used in the GREEN step.
-  // ignore: unused_field
   final WifiLockPort _wifiLock;
   final PlaybackStateMachine _machine;
 
@@ -138,6 +140,9 @@ class RadioAudioHandler extends BaseAudioHandler {
 
   final Map<TimerKind, Timer> _timers = {};
   bool _disposed = false;
+
+  /// Whether the Wi-Fi lock was last asked to be held.
+  bool _wifiLockHeld = false;
 
   /// The last now-playing value published, or null.
   NowPlaying? _nowPlaying;
@@ -294,6 +299,24 @@ class RadioAudioHandler extends BaseAudioHandler {
     await _settle();
   }
 
+  /// A swipe from recents (RESEARCH "Transition rules"): with nothing
+  /// playing (Paused, Idle or PlaybackError) the service and its
+  /// notification end; while a station plays, connects, reconnects or waits
+  /// out a call it keeps going. audio_service's default does nothing.
+  @override
+  Future<void> onTaskRemoved() async {
+    switch (_state.status) {
+      case Paused() || Idle() || PlaybackError():
+        await stop();
+      case Connecting() ||
+          Playing() ||
+          Buffering() ||
+          Reconnecting() ||
+          Interrupted():
+        break;
+    }
+  }
+
   /// Cancels timers and subscriptions. The app never disposes the handler;
   /// tests do.
   Future<void> dispose() async {
@@ -332,6 +355,12 @@ class RadioAudioHandler extends BaseAudioHandler {
         try {
           final transition = _machine.transition(_state, event, _now);
           _apply(event, transition.next);
+          // Only awaited when the lock changes: a transition with no
+          // commands must stay synchronous, so events queued back to back
+          // are reduced in the same turn.
+          if (wantsWifiLock(_state.status) != _wifiLockHeld) {
+            await _syncWifiLock();
+          }
           for (final command in transition.commands) {
             await _execute(command);
           }
@@ -390,6 +419,34 @@ class RadioAudioHandler extends BaseAudioHandler {
     // them would push everything else out of the 50-entry log.
     if (event is! BufferedPositionChanged) {
       _log('$event → ${describeStatus(next.status)}');
+    }
+  }
+
+  /// Whether [status] keeps the Wi-Fi radio awake: only while audio is
+  /// live or being fetched (Connecting, Playing, Buffering, Reconnecting).
+  /// Interrupted, Paused, PlaybackError and Idle hold no lock (RESEARCH FGS
+  /// table, PLAT-06, T-13-01).
+  static bool wantsWifiLock(PlaybackStatus status) => switch (status) {
+    Connecting() || Playing() || Buffering() || Reconnecting() => true,
+    Idle() || Interrupted() || Paused() || PlaybackError() => false,
+  };
+
+  /// Brings the Wi-Fi lock in line with the state; the queue calls it after
+  /// a transition only when [wantsWifiLock] differs from what was last
+  /// asked, so it acquires once on entering the held set and releases once
+  /// on leaving it. A failing platform call is logged and never stops the
+  /// queue.
+  Future<void> _syncWifiLock() async {
+    final wanted = wantsWifiLock(_state.status);
+    _wifiLockHeld = wanted;
+    try {
+      if (wanted) {
+        await _wifiLock.acquire();
+      } else {
+        await _wifiLock.release();
+      }
+    } catch (error) {
+      _log('Wi-Fi lock ${wanted ? 'acquire' : 'release'} failed: $error');
     }
   }
 
