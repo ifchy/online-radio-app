@@ -4,16 +4,16 @@ milestone: v1.0
 current_phase: 01
 current_phase_name: Playback Engine & Walking Skeleton
 status: executing
-stopped_at: Completed 01-11-PLAN.md
-last_updated: "2026-09-25T20:02:29.394Z"
+stopped_at: Completed 01-12-PLAN.md
+last_updated: "2026-09-25T20:16:31.360Z"
 last_activity: 2026-09-25
-last_activity_desc: Completed 01-11 (debug panel)
-state_head: 774d6b89980ac35935b52aa402e5b31889e79874
+last_activity_desc: Completed 01-12 (connectivity)
+state_head: 286f9b4b6b906dc153fdf94c37154ba6efd08f0f
 progress:
   total_phases: 4
   completed_phases: 0
   total_plans: 13
-  completed_plans: 11
+  completed_plans: 12
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-09-24)
 ## Current Position
 
 Phase: 01 (Playback Engine & Walking Skeleton) — EXECUTING
-Plan: 12 of 13 — 11 complete (01-01 to 01-11); wave 6 continues with 01-12, then 01-13
+Plan: 13 of 13 — 12 complete (01-01 to 01-12); wave 8 (01-13, audio focus) is next
 Status: Ready to execute
-Last activity: 2026-09-25 — Completed 01-11 (debug panel)
+Last activity: 2026-09-25 — Completed 01-12 (connectivity)
 
-Progress: [████████░░] 85% (11/13 plans in Phase 01)
+Progress: [█████████░] 92% (12/13 plans in Phase 01)
 
 ## Performance Metrics
 
@@ -70,6 +70,7 @@ Progress: [████████░░] 85% (11/13 plans in Phase 01)
 | Phase 01 P02 | 1 day (owner step) | 2 tasks | 5 files |
 | Phase 01 P10 | 11 min | 2 tasks | 11 files |
 | Phase 01 P11 | 5 min | 2 tasks | 5 files |
+| Phase 01 P12 | 8 min | 2 tasks | 11 files |
 
 ## Accumulated Context
 
@@ -119,6 +120,10 @@ Recent decisions affecting current work:
 - [Phase 01]: [01-10]: AudioEngine.setRetryBudget(standard|trip|batterySaver) is the single D-10 setting; it reaches the reducer as SetRetryBudget and re-arms the budget timer mid-outage. The notification alternates 'Повторно свързване…' (waiting) and 'Свързване…' (retry loading)
 - [Phase 01]: [01-11]: The debug panel (D-07) opens only from HomeScreen's Debug action behind showDebugTools = !kReleaseMode; debug_panel.dart may be imported only by home_screen.dart. It renders providers only (no I/O), so diagnostics stay in memory
 - [Phase 01]: [01-11]: The panel's stream switcher starts a station with PlayContext.single() and startStreamIndex i (AudioEngine exposes no current PlayContext); labels are plain English and outside the BG copy review
+- [Phase 01]: [01-12]: Network state enters the reducer as ConnectivityChanged from a 500 ms-debounced ConnectivityPort (connectivity_plus only in connectivity_port_impl.dart); EngineState.online is a getter over the budget clock's flag. The adapter reports only differences from the last state seen (isOnline sets the baseline)
+- [Phase 01]: [01-12]: Offline during an outage -> Reconnecting(waitingForNetwork) with no backoff and only the offline budget running (standard 10 min -> PlaybackError(offline), full release); offline while Playing/Buffering only records the flag, and the stall watchdog or a failure takes over
+- [Phase 01]: [01-12]: Online or a network change while Reconnecting/Buffering -> _reloadNow (retry from the last working stream, backoff reset, new generation); while Playing -> a 5 s flow check that reloads only if the current load's buffered position did not advance. Connecting, Paused, Idle and Error never react (PLAY-10)
+- [Phase 01]: [01-12]: RadioAudioHandler's 6th positional parameter is the ConnectivityPort (tests: FakeConnectivityPort); BufferedPositionChanged is reduced but never logged, so the 50-entry diagnostics log stays readable. Flow check on HLS may cause one spurious reload per network change; tune flowCheckDelay on device (A13)
 
 ### Pending Todos
 
@@ -148,6 +153,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-09-25T20:02:29.373Z
-Stopped at: Completed 01-11-PLAN.md
+Last session: 2026-09-25T20:16:31.337Z
+Stopped at: Completed 01-12-PLAN.md
 Resume file: None

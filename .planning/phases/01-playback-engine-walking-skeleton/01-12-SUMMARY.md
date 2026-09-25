@@ -280,3 +280,7 @@ None.
 ---
 *Phase: 01-playback-engine-walking-skeleton*
 *Completed: 2026-09-25*
+
+## Self-Check: PASSED
+
+All 11 created or modified files exist. Commits 43207bf, cb041ca, 07ba2e7 and f55bd88 are in git, and no tracked file was deleted. The TDD gate commits are in order: test(01-12) before feat(01-12) for both tasks. Both tasks' grep gates were re-run and pass (onConnectivityChanged and checkConnectivity in the adapter, ConnectivityPort, FakeConnectivityPort; ConnectivityChanged, flowCheckDelay and waitingForNetwork in the reducer, ConnectivityChanged in the handler, `ConnectivityPortImpl(` in bootstrap, no Flutter or plugin import in the reducer). The CI import-boundary and tracking-SDK checks pass. The plan-level verification (`flutter pub get && dart run build_runner build -d && flutter analyze && dart analyze && flutter test`) passes with 502 tests (15 + 38 + 12 new).
