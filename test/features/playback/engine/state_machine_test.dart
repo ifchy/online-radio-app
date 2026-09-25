@@ -1316,6 +1316,15 @@ void main() {
     int loadsAndResolves(List<EngineCommand> commands) =>
         commands.where((c) => c is Load || c is Resolve).length;
 
+    /// A retry round in which every stream fails.
+    EngineState failRound(EngineState s) {
+      var next = s;
+      while (next.status is Connecting) {
+        next = _failCurrent(next);
+      }
+      return next;
+    }
+
     test('the network state starts online', () {
       expect(const EngineState.initial().online, isTrue);
     });
@@ -1361,7 +1370,7 @@ void main() {
         'waitingForNetwork, the budget re-armed for the offline budget', () {
       var s = dropped(playing());
       s = _run(s, TimerFired(TimerKind.backoff, s.generation)).next;
-      s = _failCurrent(s); // the retry round fails: Reconnecting(attempt 1)
+      s = failRound(s); // the retry round fails: Reconnecting(attempt 1)
       expect(s.status, isA<Reconnecting>());
       final at = _t0.add(sec * 20);
       final t = _run(s, const ConnectivityChanged(online: false), at);
@@ -1450,7 +1459,7 @@ void main() {
       var s = dropped(playing());
       for (var i = 0; i < 4; i++) {
         s = _run(s, TimerFired(TimerKind.backoff, s.generation)).next;
-        s = _failCurrent(s);
+        s = failRound(s);
       }
       expect(s.status, isA<Reconnecting>());
       expect(s.attempt, 4);
@@ -1462,7 +1471,7 @@ void main() {
       expect(t.next.attempt, 1);
       expect(loadsAndResolves(t.commands), 1);
       // If it fails, the next wait is the second step (1 s), not 15 s.
-      final failed = _failCurrent(t.next);
+      final failed = failRound(t.next);
       expect(failed.status, isA<Reconnecting>());
       final wait = (failed.status as Reconnecting).nextAttemptAt;
       expect(wait, _t0.add(sec));

@@ -52,8 +52,13 @@ import 'state_machine.dart';
 ///   only titles from the current load after it is ready are shown
 ///   (Pitfall E).
 ///
-/// Network-change handling (01-12) and interruptions (01-13) arrive in
-/// later plans.
+/// - Network changes (the debounced [ConnectivityPort]) go through the same
+///   queue: offline during an outage waits without retrying until the
+///   offline budget runs out; back online or on another network it retries
+///   at once; a network change while Playing checks after 5 s that audio is
+///   still arriving (buffered position) and reloads only if not.
+///
+/// Interruptions (01-13) arrive in a later plan.
 class RadioAudioHandler extends BaseAudioHandler {
   RadioAudioHandler(
     this._player,
@@ -79,7 +84,9 @@ class RadioAudioHandler extends BaseAudioHandler {
       _player.snapshots.listen(_onSnapshot),
       _player.failures.listen(_onFailure),
       _player.icyTitles.listen(_onIcyTitle),
+      _player.bufferedPositions.listen(_onBufferedPosition),
     ]);
+    unawaited(_watchConnectivity());
   }
 
   final StreamPlayer _player;
@@ -362,7 +369,11 @@ class RadioAudioHandler extends BaseAudioHandler {
     if (station != null) _lastStation = station;
     _setStation(station);
     if (next.status != previous.status) _publishStatus(next.status);
-    _log('$event → ${describeStatus(next.status)}');
+    // Buffered positions arrive about every 500 ms while playing; logging
+    // them would push everything else out of the 50-entry log.
+    if (event is! BufferedPositionChanged) {
+      _log('$event → ${describeStatus(next.status)}');
+    }
   }
 
   Future<void> _execute(EngineCommand command) async {
@@ -436,8 +447,35 @@ class RadioAudioHandler extends BaseAudioHandler {
   }
 
   // -------------------------------------------------------------------------
-  // Player inputs
+  // Player and network inputs
   // -------------------------------------------------------------------------
+
+  /// Seeds the network state from [ConnectivityPort.isOnline], then feeds
+  /// every change onto the queue. The state machine starts online, so only
+  /// an offline answer needs an event. A port that fails counts as online:
+  /// the stall watchdog and player failures still reconnect.
+  Future<void> _watchConnectivity() async {
+    var online = true;
+    try {
+      online = await _connectivity.isOnline();
+    } catch (error) {
+      _log('isOnline failed: $error');
+    }
+    if (_disposed) return;
+    if (!online) unawaited(_dispatch(const ConnectivityChanged(online: false)));
+    _subscriptions.add(
+      _connectivity.changes.listen(
+        (change) => unawaited(
+          _dispatch(
+            ConnectivityChanged(
+              online: change.online,
+              networkChanged: change.networkChanged,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
   void _onSnapshot(PlayerSnapshot snapshot) {
     if (snapshot.generation == _state.generation &&
@@ -454,6 +492,10 @@ class RadioAudioHandler extends BaseAudioHandler {
       ),
     );
   }
+
+  void _onBufferedPosition(BufferedPosition buffered) => unawaited(
+    _dispatch(BufferedPositionChanged(buffered.generation, buffered.position)),
+  );
 
   void _onFailure(PlayerFailure failure) =>
       unawaited(_dispatch(PlayerFailed(failure.generation, failure.code)));
@@ -548,7 +590,10 @@ class RadioAudioHandler extends BaseAudioHandler {
       kind: candidate?.kind,
       round: s.round,
       reconnectAttempt: s.attempt,
-      nextRetryDelay: s.status is Reconnecting ? _lastBackoff : null,
+      nextRetryDelay: switch (s.status) {
+        Reconnecting(waitingForNetwork: false) => _lastBackoff,
+        _ => null,
+      },
       lastTimeToAudio: _lastTimeToAudio,
       recentEvents: List.unmodifiable(_recentEvents),
     );

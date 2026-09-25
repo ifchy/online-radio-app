@@ -235,7 +235,10 @@ String describeStatus(PlaybackStatus status) => switch (status) {
     'Connecting(stream $streamIndex, round $round)',
   Playing(:final streamIndex) => 'Playing(stream $streamIndex)',
   Buffering(:final streamIndex) => 'Buffering(stream $streamIndex)',
-  Reconnecting(:final attempt) => 'Reconnecting(attempt $attempt)',
+  Reconnecting(:final attempt, :final waitingForNetwork) =>
+    waitingForNetwork
+        ? 'Reconnecting(attempt $attempt, waiting for network)'
+        : 'Reconnecting(attempt $attempt)',
   Interrupted() => 'Interrupted',
   Paused() => 'Paused',
   PlaybackError(:final kind) => 'Error(${kind.name})',
@@ -617,12 +620,20 @@ final class Transition {
 ///   failing; when it is used up the station ends in PlaybackError with
 ///   everything released. [EngineTimings.stablePlayingReset] of stable
 ///   Playing ends the outage and resets the backoff.
+/// - Connectivity (01-12): offline during an outage waits for the network
+///   (Reconnecting(waitingForNetwork), no backoff, the offline budget runs);
+///   online or a network change while Reconnecting or Buffering retries
+///   now with the backoff reset; a network change while Playing arms the
+///   [EngineTimings.flowCheckDelay] flow check, which reloads only if the
+///   buffered position has not advanced.
 /// - UserPause/UserStop from an active state: Paused/Idle, everything
 ///   stopped, every timer cancelled and focus released.
 /// - Guards (PLAY-10): an event stamped with an older generation changes
 ///   nothing, and only UserPlay and UserResume start playback from Paused,
-///   Idle or Error. Reconnecting + its timer is the only path that starts
-///   playback without a user command (01-12 adds connectivity, 01-13 focus).
+///   Idle or Error. Reconnecting + its timer or connectivity, Buffering or
+///   Playing + connectivity or the flow check (all mid-session reloads) are
+///   the only paths that start a load without a user command (01-13 adds
+///   focus).
 class PlaybackStateMachine {
   const PlaybackStateMachine({
     required this.policy,
@@ -661,8 +672,16 @@ class PlaybackStateMachine {
       now,
     ),
     SetRetryBudget(:final preset) => _setRetryBudget(state, preset, now),
-    ConnectivityChanged() => _unchanged(state),
-    BufferedPositionChanged() => _unchanged(state),
+    ConnectivityChanged() => _connectivityChanged(state, event, now),
+    BufferedPositionChanged(:final generation, :final position) =>
+      generation == state.generation
+          ? Transition(
+              state.copyWith(
+                lastBuffered: (generation: generation, position: position),
+              ),
+              const [],
+            )
+          : _unchanged(state),
   };
 
   static Transition _unchanged(EngineState state) =>
@@ -934,6 +953,7 @@ class PlaybackStateMachine {
       // the ~10 s recovery target (ARCHITECTURE Pattern 4).
       (TimerKind.stall, Buffering()) => _reconnect(state, now),
       (TimerKind.backoff, Reconnecting()) => _retry(state, now),
+      (TimerKind.flowCheck, Playing() || Buffering()) => _flowCheck(state, now),
       (TimerKind.stablePlaying, Playing()) => Transition(
         state.copyWith(budget: state.budget.reset(), attempt: 0),
         const [],
@@ -992,7 +1012,9 @@ class PlaybackStateMachine {
     if (roundEnds && nextRound >= timings.maxDeadOnArrivalRounds) {
       return _toError(
         state.copyWith(onlyFormatFailures: onlyFormatFailures),
-        onlyFormatFailures
+        !state.online
+            ? PlaybackErrorKind.offline
+            : onlyFormatFailures
             ? PlaybackErrorKind.unsupportedFormat
             : PlaybackErrorKind.allStreamsFailed,
       );
@@ -1022,42 +1044,48 @@ class PlaybackStateMachine {
   }
 
   /// Playback dropped or a retry round failed: wait the backoff for this
-  /// attempt, then retry at the live edge (PLAY-07, PLAY-11).
+  /// attempt, then retry at the live edge (PLAY-07, PLAY-11). Offline there
+  /// is no backoff: Reconnecting(waitingForNetwork) waits for the network
+  /// and only the offline budget runs (T-12-01).
   ///
   /// The status keeps `playing: true` so the foreground service stays up
   /// while recovering (Pitfall 1). The budget clock runs from the first
-  /// failure of the outage; the budget timer is armed for what is left, and
-  /// a budget already used up gives up at once. [failed] is the stream whose
-  /// resolution is dropped (a stall keeps it: the URL was fine).
+  /// failure of the outage; the budget timer is armed for what is left of
+  /// the budget being spent (online or offline), and a budget already used
+  /// up gives up at once. [failed] is the stream whose resolution is dropped
+  /// (a stall keeps it: the URL was fine).
   Transition _reconnect(
     EngineState state,
     DateTime now, {
     StationStream? failed,
   }) {
-    final budget = state.budget.start(now, online: state.budget.online);
+    final budget = state.budget.start(now, online: state.online);
     final failing = state.copyWith(budget: budget);
     final exhaustion = budget.exhausted(now);
     if (exhaustion != null) return _giveUp(failing, exhaustion);
-    final delay = policy.delayFor(state.attempt);
+    final waiting = !state.online;
+    final delay = waiting ? null : policy.delayFor(state.attempt);
     final generation = state.generation + 1;
     return Transition(
       failing.copyWith(
         status: PlaybackStatus.reconnecting(
           station: state.station!,
           attempt: state.attempt,
-          nextAttemptAt: now.add(delay),
+          nextAttemptAt: delay == null ? null : now.add(delay),
+          waitingForNetwork: waiting,
         ),
         generation: generation,
         candidates: const [],
         candidateIndex: 0,
         connectStartedAt: null,
+        flowCheckBaseline: null,
       ),
       [
         const CancelAllTimers(),
         const ClearNowPlaying(),
         const StopTransport(),
         if (failed != null) InvalidateResolution(failed),
-        StartTimer(TimerKind.backoff, delay, generation),
+        if (delay != null) StartTimer(TimerKind.backoff, delay, generation),
         StartTimer(TimerKind.budget, budget.remaining(now), generation),
       ],
     );
@@ -1068,6 +1096,8 @@ class PlaybackStateMachine {
   Transition _retry(EngineState state, DateTime now) {
     final exhaustion = state.budget.exhausted(now);
     if (exhaustion != null) return _giveUp(state, exhaustion);
+    // A retry while offline would only burn the budget and the battery.
+    if (!state.online) return _reconnect(state, now);
     final station = state.station!;
     final start = _reconnectStart(state);
     final generation = state.generation + 1;
@@ -1090,6 +1120,108 @@ class PlaybackStateMachine {
         Resolve(station.streams[start], generation),
       ],
     );
+  }
+
+  /// Reload now at the live edge, without waiting for a backoff (the
+  /// network came back or changed, or audio stopped arriving): a retry from
+  /// the stream that last worked with the backoff reset, under a new
+  /// generation. From Playing or Buffering this opens an outage (the URL
+  /// was fine, so nothing is invalidated). Offline it waits for the network
+  /// instead.
+  Transition _reloadNow(EngineState state, DateTime now) {
+    if (!state.online) return _reconnect(state, now);
+    final wasReconnecting = state.status is Reconnecting;
+    final budget = state.budget.start(now, online: true);
+    final retry = _retry(
+      state.copyWith(budget: budget, attempt: 0, flowCheckBaseline: null),
+      now,
+    );
+    if (retry.next.status is! Connecting) return retry;
+    return Transition(retry.next, [
+      const CancelAllTimers(),
+      if (!wasReconnecting) ...[const ClearNowPlaying(), const StopTransport()],
+      StartTimer(
+        TimerKind.budget,
+        budget.remaining(now),
+        retry.next.generation,
+      ),
+      ...retry.commands,
+    ]);
+  }
+
+  /// A debounced network change (RESEARCH "Transition rules", ARCHITECTURE
+  /// Pattern 4). The budget clock always learns the new flag; only
+  /// Reconnecting, a retry Connecting, Buffering and Playing react. Paused,
+  /// Idle and PlaybackError never start anything (PLAY-10, T-12-03).
+  ///
+  /// - Offline during an outage: Reconnecting(waitingForNetwork), no backoff,
+  ///   the offline budget runs.
+  /// - Back online, or on another network, while Reconnecting or Buffering:
+  ///   retry now with the backoff reset.
+  /// - The same while Playing: arm the flow check.
+  /// - A user start that is still Connecting is left alone: its connect
+  ///   timer and rotation already cover it, and restarting it would only
+  ///   make a second connection (idempotency).
+  Transition _connectivityChanged(
+    EngineState state,
+    ConnectivityChanged event,
+    DateTime now,
+  ) {
+    final wasOnline = state.online;
+    final updated = state.copyWith(
+      budget: state.budget.onConnectivity(now, online: event.online),
+    );
+    final cameBack = event.online && (!wasOnline || event.networkChanged);
+    final retryInFlight = updated.budget.running && state.status is Connecting;
+    switch (state.status) {
+      case Reconnecting() when cameBack:
+        return _reloadNow(updated, now);
+      case Reconnecting(:final waitingForNetwork)
+          when !event.online && !waitingForNetwork:
+        return _reconnect(updated, now);
+      case Connecting() when retryInFlight && !event.online:
+        return _reconnect(updated, now);
+      case Buffering() when cameBack:
+        return _reloadNow(updated, now);
+      case Playing() when cameBack:
+        return Transition(
+          updated.copyWith(flowCheckBaseline: updated.currentBufferedPosition),
+          [
+            StartTimer(
+              TimerKind.flowCheck,
+              timings.flowCheckDelay,
+              state.generation,
+            ),
+          ],
+        );
+      case _:
+        final rearm =
+            wasOnline != event.online &&
+            updated.budget.running &&
+            (state.status is Reconnecting || state.status is Connecting);
+        return Transition(updated, [
+          if (rearm)
+            StartTimer(
+              TimerKind.budget,
+              updated.budget.remaining(now),
+              state.generation,
+            ),
+        ]);
+    }
+  }
+
+  /// The flow check fired: if the buffered position advanced since the
+  /// network change, audio is still arriving and nothing happens; otherwise
+  /// the old socket is dead and the stream is reloaded at once instead of
+  /// waiting for the buffer to drain.
+  Transition _flowCheck(EngineState state, DateTime now) {
+    final current = state.currentBufferedPosition;
+    final baseline = state.flowCheckBaseline;
+    final advanced =
+        current != null && (baseline == null || current > baseline);
+    final cleared = state.copyWith(flowCheckBaseline: null);
+    if (advanced) return Transition(cleared, const []);
+    return _reloadNow(cleared, now);
   }
 
   /// The budget timer: gives up when the budget is used up, or re-arms for

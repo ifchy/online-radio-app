@@ -57,7 +57,8 @@ enum BudgetExhaustion {
 ///   ([recovered]); a new drop resumes it with the time already spent.
 /// - 30 s of stable playback ends the outage ([reset]).
 ///
-/// Until 01-12 feeds real connectivity in, the network counts as online.
+/// The state machine feeds every connectivity change in through
+/// [onConnectivity]; until the first one the network counts as online.
 final class RetryBudgetClock {
   const RetryBudgetClock({
     this.preset = RetryBudgetPreset.standard,
