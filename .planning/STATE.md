@@ -4,16 +4,16 @@ milestone: v1.0
 current_phase: 01
 current_phase_name: Playback Engine & Walking Skeleton
 status: executing
-stopped_at: Completed 01-07-PLAN.md
-last_updated: "2026-09-25T16:26:45.056Z"
+stopped_at: Completed 01-08-PLAN.md
+last_updated: "2026-09-25T16:39:08.603Z"
 last_activity: 2026-09-25
-last_activity_desc: Completed 01-07 localised notification state text, icon, channel name and first-launch date
-state_head: 1085ccf33e99440eec1e0546c12accedfd482ac0
+last_activity_desc: Completed 01-08 Cyrillic ICY now-playing on the notification, lock screen and mini-player, never stale
+state_head: f52bbf8485b3eeee41e5a061cb39ffcdf041c520
 progress:
   total_phases: 4
   completed_phases: 0
   total_plans: 13
-  completed_plans: 6
+  completed_plans: 7
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-09-24)
 ## Current Position
 
 Phase: 01 (Playback Engine & Walking Skeleton) — EXECUTING
-Plan: 6 of 13 complete (01-01, 01-03, 01-04, 01-05, 01-06, 01-07); 01-02 (Wave 2) still open, waiting on the owner's keystore
+Plan: 7 of 13 complete (01-01, 01-03, 01-04, 01-05, 01-06, 01-07, 01-08); 01-02 (Wave 2) still open, waiting on the owner's keystore
 Status: Ready to execute
-Last activity: 2026-09-25 — Completed 01-07 localised notification state text, icon, channel name and first-launch date
+Last activity: 2026-09-25 — Completed 01-08 Cyrillic ICY now-playing on the notification, lock screen and mini-player, never stale
 
-Progress: [█████░░░░░] 46% (6/13 plans in Phase 01)
+Progress: [█████░░░░░] 54% (7/13 plans in Phase 01)
 
 ## Performance Metrics
 
@@ -65,6 +65,7 @@ Progress: [█████░░░░░] 46% (6/13 plans in Phase 01)
 | Phase 01 P06 | 6 min | 2 tasks | 8 files |
 | Phase 01 P05 | 6 min | 2 tasks | 7 files |
 | Phase 01 P07 | 8 min | 2 tasks | 13 files |
+| Phase 01 P08 | 10 min | 3 tasks | 11 files |
 
 ## Accumulated Context
 
@@ -100,6 +101,9 @@ Recent decisions affecting current work:
 - [Phase 01]: [01-07]: ic_stat_radio (notification small icon, Material Symbols radio, Apache-2.0) is in res/raw/keep.xml; any new drawable audio_service looks up by name must be added there too
 - [Phase 01]: [01-07]: audio_service creates the notification channel only once, so its name is fixed by the device language at first run; the owner must reinstall before checking 'Възпроизвеждане'
 - [Phase 01]: [01-07]: first_launch_at is written once in UTC ISO-8601 via SharedPreferencesAsync before AudioService.init; an unreadable value reads as null so startup never fails; firstLaunchAtProvider is overridden in bootstrap
+- [Phase 01]: [01-08]: RadioAudioHandler shows ICY now-playing only for the current generation after its first ready snapshot (_readySeenForGeneration, reset by _nextGeneration); pre-ready titles are dropped, not held, so a stale native title cannot leak
+- [Phase 01]: [01-08]: _setNowPlaying is the single now-playing write path (dedupe by NowPlaying value, then sameMediaItem); _setNowPlaying(null) clears it on every start/switch, pause, stop and failure; later plans that supersede a load must use _nextGeneration()
+- [Phase 01]: [01-08]: mediaItemFor(..., nowPlaying:) shows the ICY text (artist = artist ?? text, displaySubtitle = text) only while Playing; the title is always the station name; the mini-player reuses its live-region line for the same text via nowPlayingProvider
 
 ### Pending Todos
 
@@ -129,6 +133,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-09-25T16:26:44.986Z
-Stopped at: Completed 01-07-PLAN.md
+Last session: 2026-09-25T16:39:02.014Z
+Stopped at: Completed 01-08-PLAN.md
 Resume file: None

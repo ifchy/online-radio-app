@@ -12,7 +12,7 @@ Requirements for initial release (milestone v1.0). Each maps to exactly one road
 ### Playback
 
 - [ ] **PLAY-01**: User can keep listening with the screen off or the app in the background (media foreground service), and the service stops when the user stops playback
-- [ ] **PLAY-02**: User can control playback (play/pause/stop, station name, now playing) from the media notification and lock screen
+- [x] **PLAY-02**: User can control playback (play/pause/stop, station name, now playing) from the media notification and lock screen
 - [ ] **PLAY-03**: User can control playback with wired headset, Bluetooth headset and car Bluetooth buttons
 - [ ] **PLAY-04**: User can skip to the next/previous station from media buttons (headset, steering wheel, notification), cycling through the list playback was started from (favourites by default), with the UI staying in sync
 - [ ] **PLAY-05**: Playback ducks for navigation prompts, pauses for phone calls and other apps, and resumes after a transient interruption — unless the user had paused
@@ -29,7 +29,7 @@ Requirements for initial release (milestone v1.0). Each maps to exactly one road
 - [x] **STRM-02**: User can play HLS (`.m3u8`) streams, including HLS served under non-`.m3u8` URLs
 - [x] **STRM-03**: User can play stations whose URL is a `.pls` or `.m3u` playlist (resolved to the real stream URL by the app)
 - [x] **STRM-04**: User can play plain `http://` streams in release builds, while all app-owned traffic (catalogue, Radio Browser API, logos) is HTTPS-only
-- [ ] **STRM-05**: User sees "now playing" artist/title from ICY metadata when the station provides it, with correct Cyrillic (windows-1251 repair) and no stale title after switching stations
+- [x] **STRM-05**: User sees "now playing" artist/title from ICY metadata when the station provides it, with correct Cyrillic (windows-1251 repair) and no stale title after switching stations
 
 ### Catalogue
 
@@ -138,7 +138,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | PLAY-01 | Phase 1 | Pending |
-| PLAY-02 | Phase 1 | Pending |
+| PLAY-02 | Phase 1 | Complete |
 | PLAY-03 | Phase 1 | Pending |
 | PLAY-04 | Phase 3 | Pending |
 | PLAY-05 | Phase 1 | Pending |
@@ -152,7 +152,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | STRM-02 | Phase 1 | Complete |
 | STRM-03 | Phase 1 | Complete |
 | STRM-04 | Phase 1 | Complete |
-| STRM-05 | Phase 1 | Pending |
+| STRM-05 | Phase 1 | Complete |
 | CAT-01 | Phase 2 | Pending |
 | CAT-02 | Phase 2 | Pending |
 | CAT-03 | Phase 2 | Pending |
