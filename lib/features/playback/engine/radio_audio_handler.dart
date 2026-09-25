@@ -26,7 +26,12 @@ import 'ports.dart';
 ///
 /// Reconnect, fallback rotation and interruptions arrive in later plans.
 class RadioAudioHandler extends BaseAudioHandler {
-  RadioAudioHandler(this._player, this._session, this._directory) {
+  RadioAudioHandler(
+    this._player,
+    this._session,
+    this._directory,
+    this._resolver,
+  ) {
     _subscriptions.addAll([
       _player.snapshots.listen(_onSnapshot),
       _player.failures.listen(_onFailure),
@@ -36,6 +41,8 @@ class RadioAudioHandler extends BaseAudioHandler {
   final StreamPlayer _player;
   final AudioSessionPort _session;
   final StationDirectory _directory;
+  // ignore: unused_field
+  final StreamResolver _resolver;
   final List<StreamSubscription<Object?>> _subscriptions = [];
 
   final _statusController = StreamController<PlaybackStatus>.broadcast();

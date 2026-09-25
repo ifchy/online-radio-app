@@ -1,9 +1,12 @@
 import 'package:audio_service/audio_service.dart';
 import 'package:audio_session/audio_session.dart';
+import 'package:clock/clock.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 
+import '../core/network/media_http_client.dart';
 import '../core/network/user_agent.dart';
 import '../features/catalog/application/catalog_providers.dart';
 import '../features/catalog/data/station_directory.dart';
@@ -12,6 +15,7 @@ import '../features/playback/engine/audio_service_engine.dart';
 import '../features/playback/engine/audio_session_port_impl.dart';
 import '../features/playback/engine/just_audio_stream_player.dart';
 import '../features/playback/engine/radio_audio_handler.dart';
+import '../features/playback/engine/resolver/stream_resolver.dart';
 import 'app.dart';
 
 /// Composition root. The playback handler is built here, outside the widget
@@ -25,12 +29,19 @@ Future<void> bootstrap() async {
   await session.configure(const AudioSessionConfiguration.music());
 
   final directory = StationDirectory.phase1();
+  final userAgent = buildUserAgent(packageInfo.version);
+
+  // The only Dart client allowed to fetch http:// (media playlists, STRM-04).
+  // App-owned traffic goes through AppHttpClient, which is HTTPS-only.
+  final mediaClient = MediaHttpClient(http.Client(), userAgent);
+  final resolver = HttpStreamResolver(mediaClient, const Clock());
 
   final handler = await AudioService.init(
     builder: () => RadioAudioHandler(
-      JustAudioStreamPlayer(userAgent: buildUserAgent(packageInfo.version)),
+      JustAudioStreamPlayer(userAgent: userAgent),
       AudioSessionPortImpl(),
       directory,
+      resolver,
     ),
     config: const AudioServiceConfig(
       // Permanent once shipped: Android keeps the user's channel settings.

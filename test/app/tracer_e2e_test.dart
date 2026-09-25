@@ -5,9 +5,12 @@
 // media notification, the lock screen and headset buttons do through
 // audio_service.
 import 'package:audio_service/audio_service.dart';
+import 'package:clock/clock.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/testing.dart';
 import 'package:radio/app/app.dart';
+import 'package:radio/core/network/media_http_client.dart';
 import 'package:radio/features/catalog/application/catalog_providers.dart';
 import 'package:radio/features/catalog/data/station_directory.dart';
 import 'package:radio/features/catalog/domain/station.dart';
@@ -16,6 +19,7 @@ import 'package:radio/features/playback/domain/playback_status.dart';
 import 'package:radio/features/playback/engine/audio_service_engine.dart';
 import 'package:radio/features/playback/engine/ports.dart';
 import 'package:radio/features/playback/engine/radio_audio_handler.dart';
+import 'package:radio/features/playback/engine/resolver/stream_resolver.dart';
 
 import '../support/fakes.dart';
 
@@ -32,7 +36,18 @@ void main() {
       final player = FakeStreamPlayer(log);
       final session = FakeAudioSessionPort(log);
       final directory = StationDirectory.phase1();
-      final handler = RadioAudioHandler(player, session, directory);
+      // A progressive stream must never touch the network in Dart: the
+      // resolver's client fails the test if it is ever called.
+      final resolver = HttpStreamResolver(
+        MediaHttpClient(
+          MockClient((request) async {
+            fail('Unexpected HTTP request for a progressive stream: $request');
+          }),
+          'eRadioto/test',
+        ),
+        const Clock(),
+      );
+      final handler = RadioAudioHandler(player, session, directory, resolver);
       final engine = AudioServiceEngine(handler);
       final station = directory.byId(StationId.curated('bg-radio'))!;
 

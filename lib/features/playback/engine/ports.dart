@@ -2,6 +2,8 @@
 /// handler can be tested with fakes.
 library;
 
+import '../../catalog/domain/station.dart';
+
 /// How a resolved stream must be opened by the player.
 enum PlayableKind { progressive, hls }
 
@@ -96,4 +98,62 @@ abstract interface class StreamPlayer {
 /// play; releasing it is the handler's job (just_audio never abandons focus).
 abstract interface class AudioSessionPort {
   Future<void> release();
+}
+
+/// Turns a catalogue [StationStream] into directly playable endpoints.
+///
+/// Neither just_audio nor ExoPlayer parses `.pls`/`.m3u` wrappers, and the
+/// source type must never be guessed from the file extension, so every stream
+/// passes through here before [StreamPlayer.load].
+abstract interface class StreamResolver {
+  /// The playable candidates for [stream], in playlist order (they are
+  /// fallbacks). Never empty: a stream with nothing playable throws
+  /// [StreamResolutionException].
+  Future<List<ResolvedStream>> resolve(StationStream stream);
+
+  /// Forgets any cached resolution of [stream], so the next [resolve]
+  /// fetches again. Called when playback of a resolved URL fails.
+  void invalidate(StationStream stream);
+}
+
+/// Why a stream could not be resolved.
+enum StreamResolutionFailure {
+  /// The URL, a redirect target or every playlist entry is not http(s).
+  unsupportedScheme,
+
+  /// The playlist server answered with a non-2xx status.
+  httpStatus,
+
+  /// No complete answer within the resolver's time limit.
+  timeout,
+
+  /// The playlist body is larger than the byte cap.
+  tooLarge,
+
+  /// Playlists nest deeper than the depth limit.
+  tooDeep,
+
+  /// More redirects than the redirect limit.
+  tooManyRedirects,
+
+  /// The playlist has no playable http(s) entry.
+  empty,
+
+  /// The body is not a playlist (HTML, binary data).
+  notAPlaylist,
+
+  /// The connection failed.
+  network,
+}
+
+final class StreamResolutionException implements Exception {
+  const StreamResolutionException(this.reason, [this.detail]);
+
+  final StreamResolutionFailure reason;
+  final String? detail;
+
+  @override
+  String toString() => detail == null
+      ? 'StreamResolutionException(${reason.name})'
+      : 'StreamResolutionException(${reason.name}: $detail)';
 }
