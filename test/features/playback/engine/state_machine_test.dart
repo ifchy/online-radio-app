@@ -778,6 +778,7 @@ void main() {
             CancelAllTimers() ||
             InvalidateResolution() ||
             ClearNowPlaying() ||
+            SetVolume() ||
             RecordTimeToAudio() => true,
           },
         ),
@@ -1864,6 +1865,328 @@ void main() {
         ),
         'Reconnecting(attempt 2, waiting for network)',
       );
+    });
+  });
+
+  group('audio focus and becoming noisy (PLAY-05, PLAY-06, PLAY-10, D-11)', () {
+    const min = Duration(minutes: 1);
+    const stopAll = [
+      CancelAllTimers(),
+      ClearNowPlaying(),
+      StopTransport(),
+      ReleaseFocus(),
+    ];
+    const interruptCommands = [
+      CancelAllTimers(),
+      ClearNowPlaying(),
+      StopTransport(),
+    ];
+
+    /// _three playing on stream 1 (so lastWorkingStreamIndex is 1).
+    EngineState playing() => _playing(_started(_three, start: 1));
+
+    EngineState buffering() {
+      final s = playing();
+      return _run(
+        s,
+        PlayerStateChanged(
+          s.generation,
+          PlayerProcessingState.buffering,
+          playing: true,
+        ),
+      ).next;
+    }
+
+    EngineState reconnecting() {
+      final s = playing();
+      return _run(s, PlayerFailed(s.generation, 0)).next;
+    }
+
+    EngineState interrupted([EngineState? from]) => _run(
+      from ?? playing(),
+      const FocusChanged(FocusChange.transientLoss),
+    ).next;
+
+    EngineState paused() => _run(playing(), const UserPause()).next;
+
+    EngineState failed() => _failCurrent(_failCurrent(_started(_single)));
+
+    int loadsAndResolves(List<EngineCommand> commands) =>
+        commands.where((c) => c is Load || c is Resolve).length;
+
+    final active = <String, EngineState Function()>{
+      'Connecting': () => _started(_three, start: 1),
+      'Playing': playing,
+      'Buffering': buffering,
+      'Reconnecting': reconnecting,
+    };
+
+    test('the fixtures are in the states they claim', () {
+      expect(active['Connecting']!().status, isA<Connecting>());
+      expect(playing().status, isA<Playing>());
+      expect(buffering().status, isA<Buffering>());
+      expect(reconnecting().status, isA<Reconnecting>());
+      expect(interrupted().status, isA<Interrupted>());
+      expect(paused().status, isA<Paused>());
+      expect(failed().status, isA<PlaybackError>());
+    });
+
+    group('a phone call (transient loss) interrupts and resumes (D-11)', () {
+      for (final MapEntry(key: label, value: make) in active.entries) {
+        test('$label + transientLoss -> Interrupted: transport stopped, '
+            'timers cancelled, focus kept, playing true (FGS kept)', () {
+          final s = make();
+          final t = _run(s, const FocusChanged(FocusChange.transientLoss));
+          expect(
+            t.next.status,
+            PlaybackStatus.interrupted(station: s.station!),
+          );
+          expect(t.commands, interruptCommands);
+          expect(t.commands, isNot(contains(const ReleaseFocus())));
+          expect(t.next.generation, greaterThan(s.generation));
+          final state = playbackStateFor(t.next.status);
+          expect(state.playing, isTrue);
+          expect(state.processingState, AudioProcessingState.buffering);
+        });
+      }
+
+      test('gainAfterPause in Interrupted -> Connecting at the last working '
+          'stream, a fresh resolve and load at the live edge', () {
+        final s = interrupted();
+        final t = _run(s, const FocusChanged(FocusChange.gainAfterPause));
+        expect(
+          t.next.status,
+          PlaybackStatus.connecting(station: _three, streamIndex: 1, round: 0),
+        );
+        expect(t.next.generation, greaterThan(s.generation));
+        expect(t.commands, [
+          const CancelAllTimers(),
+          const StopTransport(),
+          const ClearNowPlaying(),
+          StartTimer(TimerKind.connect, _timeout, t.next.generation),
+          Resolve(_s1, t.next.generation),
+        ]);
+        expect(t.next.everPlayed, isTrue);
+        expect(t.next.lastWorkingStreamIndex, 1);
+      });
+
+      test('a 15-minute call still resumes (no budget runs while '
+          'Interrupted)', () {
+        final s = interrupted(reconnecting());
+        expect(s.budget.active, isFalse);
+        expect(s.attempt, 0);
+        // Everything that can fire during the call changes nothing.
+        for (final event in [
+          TimerFired(TimerKind.budget, s.generation),
+          TimerFired(TimerKind.backoff, s.generation),
+          TimerFired(TimerKind.connect, s.generation),
+          TimerFired(TimerKind.stall, s.generation),
+          TimerFired(TimerKind.flowCheck, s.generation),
+        ]) {
+          final t = _run(s, event, _t0.add(min * 15));
+          expect(t.next.status, s.status, reason: '$event');
+          expect(t.commands, isEmpty, reason: '$event');
+        }
+        final t = _run(
+          s,
+          const FocusChanged(FocusChange.gainAfterPause),
+          _t0.add(min * 15),
+        );
+        expect(t.next.status, isA<Connecting>());
+        expect(loadsAndResolves(t.commands), 1);
+      });
+
+      test('Interrupted ignores connectivity: no reload during the call', () {
+        final s = interrupted();
+        for (final event in const [
+          ConnectivityChanged(online: false),
+          ConnectivityChanged(online: true, networkChanged: true),
+        ]) {
+          final t = _run(s, event);
+          expect(t.next.status, s.status);
+          expect(t.commands, isEmpty);
+        }
+      });
+
+      test('player events of the load stopped by the call change nothing', () {
+        final p = playing();
+        final s = interrupted(p);
+        for (final event in [
+          PlayerFailed(p.generation, 0),
+          PlayerStateChanged(
+            p.generation,
+            PlayerProcessingState.completed,
+            playing: false,
+          ),
+          PlayerStateChanged(
+            p.generation,
+            PlayerProcessingState.ready,
+            playing: true,
+          ),
+        ]) {
+          final t = _run(s, event);
+          expect(t.next.status, s.status);
+          expect(t.commands, isEmpty);
+        }
+      });
+
+      test('transientLoss again while Interrupted changes nothing', () {
+        final s = interrupted();
+        final t = _run(s, const FocusChanged(FocusChange.transientLoss));
+        expect(t.next, same(s));
+        expect(t.commands, isEmpty);
+      });
+
+      test('UserPause during Interrupted -> Paused with focus released; a '
+          'later gain does not resume', () {
+        final t = _run(interrupted(), const UserPause());
+        expect(t.next.status, PlaybackStatus.paused(station: _three));
+        expect(t.commands, stopAll);
+        final gain = _run(
+          t.next,
+          const FocusChanged(FocusChange.gainAfterPause),
+        );
+        expect(gain.next.status, t.next.status);
+        expect(gain.commands, isEmpty);
+      });
+
+      test('UserStop during Interrupted -> Idle with focus released', () {
+        final t = _run(interrupted(), const UserStop());
+        expect(t.next.status, const PlaybackStatus.idle());
+        expect(t.commands, stopAll);
+      });
+    });
+
+    group('another media app (permanent loss) pauses for good', () {
+      final states = {...active, 'Interrupted': interrupted};
+      for (final MapEntry(key: label, value: make) in states.entries) {
+        test('$label + permanentLoss -> Paused with transport, focus and '
+            'timers released; a later gain is ignored', () {
+          final s = make();
+          final t = _run(s, const FocusChanged(FocusChange.permanentLoss));
+          expect(t.next.status, PlaybackStatus.paused(station: s.station!));
+          expect(t.commands, stopAll);
+          expect(playbackStateFor(t.next.status).playing, isFalse);
+          final gain = _run(
+            t.next,
+            const FocusChanged(FocusChange.gainAfterPause),
+          );
+          expect(gain.next.status, t.next.status);
+          expect(gain.commands, isEmpty);
+        });
+      }
+    });
+
+    group('unplugging headphones or Bluetooth (becoming noisy) pauses', () {
+      final states = {...active, 'Interrupted': interrupted};
+      for (final MapEntry(key: label, value: make) in states.entries) {
+        test('$label + BecomingNoisy -> Paused with focus released; nothing '
+            'resumes it', () {
+          final s = make();
+          final t = _run(s, const BecomingNoisy());
+          expect(t.next.status, PlaybackStatus.paused(station: s.station!));
+          expect(t.commands, stopAll);
+          for (final event in const [
+            FocusChanged(FocusChange.gainAfterPause),
+            ConnectivityChanged(online: true, networkChanged: true),
+          ]) {
+            final after = _run(t.next, event);
+            expect(after.next.status, t.next.status);
+            expect(loadsAndResolves(after.commands), 0);
+          }
+        });
+      }
+    });
+
+    group('navigation prompts duck the volume', () {
+      test('duckBegin while Playing -> SetVolume(0.3), status unchanged; '
+          'duckEnd -> SetVolume(1.0)', () {
+        final s = playing();
+        final duck = _run(s, const FocusChanged(FocusChange.duckBegin));
+        expect(duck.next.status, s.status);
+        expect(duck.next.generation, s.generation);
+        expect(duck.commands, [const SetVolume(0.3)]);
+        expect(duck.next.ducked, isTrue);
+        final end = _run(duck.next, const FocusChanged(FocusChange.duckEnd));
+        expect(end.next.status, s.status);
+        expect(end.commands, [const SetVolume(1.0)]);
+        expect(end.next.ducked, isFalse);
+      });
+
+      for (final MapEntry(key: label, value: make) in active.entries) {
+        test('$label + duckBegin ducks without a status change', () {
+          final s = make();
+          final t = _run(s, const FocusChanged(FocusChange.duckBegin));
+          expect(t.next.status, s.status);
+          expect(t.commands, [const SetVolume(0.3)]);
+        });
+      }
+
+      test('a second duckBegin or a duckEnd without a duck sets nothing', () {
+        final ducked = _run(
+          playing(),
+          const FocusChanged(FocusChange.duckBegin),
+        ).next;
+        expect(
+          _run(ducked, const FocusChanged(FocusChange.duckBegin)).commands,
+          isEmpty,
+        );
+        expect(
+          _run(playing(), const FocusChanged(FocusChange.duckEnd)).commands,
+          isEmpty,
+        );
+      });
+
+      test('pausing while ducked restores the volume after releasing focus '
+          '(no duckEnd arrives once focus is abandoned)', () {
+        final ducked = _run(
+          playing(),
+          const FocusChanged(FocusChange.duckBegin),
+        ).next;
+        final t = _run(ducked, const UserPause());
+        expect(t.commands, [...stopAll, const SetVolume(1.0)]);
+        expect(t.next.ducked, isFalse);
+      });
+
+      test('a call during a duck: the resume after the call restores the '
+          'volume', () {
+        final ducked = _run(
+          playing(),
+          const FocusChanged(FocusChange.duckBegin),
+        ).next;
+        final s = interrupted(ducked);
+        final t = _run(s, const FocusChanged(FocusChange.gainAfterPause));
+        expect(t.next.status, isA<Connecting>());
+        expect(t.commands, contains(const SetVolume(1.0)));
+        expect(t.next.ducked, isFalse);
+      });
+    });
+
+    group('after a user pause or stop, and in an error, focus, noisy and '
+        'network events start nothing (PLAY-10)', () {
+      final states = <String, EngineState Function()>{
+        'Paused': paused,
+        'Idle': () => _run(playing(), const UserStop()).next,
+        'Idle (never played)': () => const EngineState.initial(),
+        'PlaybackError': failed,
+      };
+      for (final MapEntry(key: label, value: make) in states.entries) {
+        for (final event in const <EngineEvent>[
+          FocusChanged(FocusChange.gainAfterPause),
+          FocusChanged(FocusChange.transientLoss),
+          FocusChanged(FocusChange.permanentLoss),
+          FocusChanged(FocusChange.duckBegin),
+          BecomingNoisy(),
+          ConnectivityChanged(online: true, networkChanged: true),
+        ]) {
+          test('$label + $event: no commands', () {
+            final s = make();
+            final t = _run(s, event);
+            expect(t.next.status, s.status);
+            expect(t.commands, isEmpty);
+          });
+        }
+      }
     });
   });
 }

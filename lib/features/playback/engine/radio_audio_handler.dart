@@ -409,6 +409,8 @@ class RadioAudioHandler extends BaseAudioHandler {
           _resolver.invalidate(stream);
         case ClearNowPlaying():
           _setNowPlaying(null);
+        case SetVolume(:final volume):
+          await _player.setVolume(volume);
         case RecordTimeToAudio(:final duration):
           _lastTimeToAudio = duration;
           _emitDiagnostics();

@@ -10,4 +10,11 @@ class AudioSessionPortImpl implements AudioSessionPort {
     final session = await AudioSession.instance;
     await session.setActive(false);
   }
+
+  // RED scaffolding (01-13 Task 1): mapped in the GREEN step.
+  @override
+  Stream<FocusChange> get focusChanges => const Stream.empty();
+
+  @override
+  Stream<void> get becomingNoisy => const Stream.empty();
 }

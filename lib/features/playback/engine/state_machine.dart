@@ -94,6 +94,7 @@ final class EngineState {
     this.attempt = 0,
     this.lastBuffered,
     this.flowCheckBaseline,
+    this.ducked = false,
   });
 
   /// Nothing loaded, generation 0.
@@ -156,6 +157,11 @@ final class EngineState {
   /// is pending or nothing had been buffered yet.
   final Duration? flowCheckBaseline;
 
+  /// Whether the player's volume is lowered for another app's short sound
+  /// (a navigation prompt). Kept until the duck ends, focus is released or
+  /// focus is regained after a call.
+  final bool ducked;
+
   /// Whether the network is up, as last reported. The budget clock owns the
   /// flag, so the two can never disagree.
   bool get online => budget.online;
@@ -194,6 +200,7 @@ final class EngineState {
     int? attempt,
     Object? lastBuffered = _unset,
     Object? flowCheckBaseline = _unset,
+    bool? ducked,
   }) => EngineState(
     status: status ?? this.status,
     station: identical(station, _unset) ? this.station : station as Station?,
@@ -220,6 +227,7 @@ final class EngineState {
     flowCheckBaseline: identical(flowCheckBaseline, _unset)
         ? this.flowCheckBaseline
         : flowCheckBaseline as Duration?,
+    ducked: ducked ?? this.ducked,
   );
 
   @override
@@ -400,6 +408,24 @@ final class BufferedPositionChanged extends EngineEvent {
       'BufferedPositionChanged(gen $generation, ${position.inMilliseconds} ms)';
 }
 
+/// Android changed our audio focus (from the AudioSessionPort).
+final class FocusChanged extends EngineEvent {
+  const FocusChanged(this.change);
+
+  final FocusChange change;
+
+  @override
+  String toString() => 'FocusChanged(${change.name})';
+}
+
+/// Headphones were unplugged or Bluetooth audio disconnected.
+final class BecomingNoisy extends EngineEvent {
+  const BecomingNoisy();
+
+  @override
+  String toString() => 'BecomingNoisy';
+}
+
 // ---------------------------------------------------------------------------
 // Commands
 // ---------------------------------------------------------------------------
@@ -563,6 +589,24 @@ final class ClearNowPlaying extends EngineCommand {
   String toString() => 'ClearNowPlaying';
 }
 
+/// Set the player's volume (1.0 is full); used to duck under another app's
+/// short sound.
+final class SetVolume extends EngineCommand {
+  const SetVolume(this.volume);
+
+  final double volume;
+
+  @override
+  bool operator ==(Object other) =>
+      other is SetVolume && other.volume == volume;
+
+  @override
+  int get hashCode => Object.hash(SetVolume, volume);
+
+  @override
+  String toString() => 'SetVolume($volume)';
+}
+
 /// Record how long the user waited for audio (diagnostics, D-07).
 final class RecordTimeToAudio extends EngineCommand {
   const RecordTimeToAudio(this.duration);
@@ -682,6 +726,8 @@ class PlaybackStateMachine {
               const [],
             )
           : _unchanged(state),
+    // RED scaffolding (01-13 Task 1): the focus rows arrive in GREEN.
+    FocusChanged() || BecomingNoisy() => _unchanged(state),
   };
 
   static Transition _unchanged(EngineState state) =>

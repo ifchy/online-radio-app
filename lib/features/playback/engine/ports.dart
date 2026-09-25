@@ -94,10 +94,43 @@ abstract interface class StreamPlayer {
   Future<void> dispose();
 }
 
+/// An audio-focus change, as the engine sees it (RESEARCH Pattern 1 mapping
+/// table).
+enum FocusChange {
+  /// Focus lost for a while, e.g. a phone call (AUDIOFOCUS_LOSS_TRANSIENT).
+  transientLoss,
+
+  /// Focus lost for good, e.g. another media app started (AUDIOFOCUS_LOSS).
+  /// No gain ever follows it.
+  permanentLoss,
+
+  /// Another app plays briefly over us, e.g. a navigation prompt
+  /// (AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK).
+  duckBegin,
+
+  /// The ducking app is done (AUDIOFOCUS_GAIN after a duck).
+  duckEnd,
+
+  /// Focus is back after a transient loss (AUDIOFOCUS_GAIN after a pause).
+  gainAfterPause,
+}
+
 /// Audio focus as the handler needs it. Focus is requested by the player on
 /// play; releasing it is the handler's job (just_audio never abandons focus).
+///
+/// The engine is the single owner of focus and becoming-noisy events:
+/// just_audio runs with `handleInterruptions: false` (ARCHITECTURE
+/// Anti-Pattern 3).
 abstract interface class AudioSessionPort {
+  /// Abandons audio focus.
   Future<void> release();
+
+  /// Focus changes while the app holds (or held) a focus request.
+  Stream<FocusChange> get focusChanges;
+
+  /// Headphones unplugged or Bluetooth audio disconnected
+  /// (ACTION_AUDIO_BECOMING_NOISY). Only delivered while focus is held.
+  Stream<void> get becomingNoisy;
 }
 
 /// A debounced network-state change (RESEARCH "Transition rules",

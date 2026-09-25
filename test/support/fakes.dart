@@ -290,17 +290,38 @@ class FakeStreamResolver implements StreamResolver {
   void invalidate(StationStream stream) => invalidated.add(stream);
 }
 
-/// [AudioSessionPort] that counts focus releases.
+/// [AudioSessionPort] that counts focus releases and lets tests emit focus
+/// changes and becoming-noisy events. Events are delivered synchronously.
 class FakeAudioSessionPort implements AudioSessionPort {
   FakeAudioSessionPort([CallLog? log]) : log = log ?? CallLog();
 
   final CallLog log;
   int releaseCalls = 0;
 
+  final _focusChanges = StreamController<FocusChange>.broadcast(sync: true);
+  final _becomingNoisy = StreamController<void>.broadcast(sync: true);
+
   @override
   Future<void> release() async {
     releaseCalls++;
     log.add('release');
+  }
+
+  @override
+  Stream<FocusChange> get focusChanges => _focusChanges.stream;
+
+  @override
+  Stream<void> get becomingNoisy => _becomingNoisy.stream;
+
+  /// Emits [change] as if Android changed our audio focus.
+  void emitFocus(FocusChange change) => _focusChanges.add(change);
+
+  /// Emits a becoming-noisy event (headphones unplugged, Bluetooth gone).
+  void emitNoisy() => _becomingNoisy.add(null);
+
+  Future<void> close() async {
+    await _focusChanges.close();
+    await _becomingNoisy.close();
   }
 }
 

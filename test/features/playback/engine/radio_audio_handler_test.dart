@@ -1843,4 +1843,264 @@ void main() {
       });
     });
   });
+
+  group('calls, navigation prompts, unplugging and other media apps '
+      '(PLAY-05, PLAY-06, PLAY-10, D-11), under fakeAsync', () {
+    final first = StationStream(
+      url: Uri.parse('https://focus.example/primary.mp3'),
+      kind: StreamKind.progressive,
+    );
+    final second = StationStream(
+      url: Uri.parse('https://focus.example/fallback.mp3'),
+      kind: StreamKind.progressive,
+    );
+    final station = Station(
+      id: StationId.debug('focus'),
+      name: 'Фокус',
+      nameLatin: 'Fokus',
+      streams: [first, second],
+    );
+    final focusDirectory = StationDirectory([station]);
+
+    /// Built inside the fakeAsync zone; no jitter.
+    RadioAudioHandler handlerWith() {
+      final handler = RadioAudioHandler(
+        player,
+        session,
+        focusDirectory,
+        FakeStreamResolver(),
+        _english,
+        connectivity,
+        reconnectPolicy: ReconnectPolicy(Random(0), jitter: 0),
+      );
+      addTearDown(handler.dispose);
+      return handler;
+    }
+
+    void ready(FakeAsync async) {
+      player.emitSnapshot(
+        PlayerProcessingState.ready,
+        playing: true,
+        generation: player.lastLoad.generation,
+      );
+      async.flushMicrotasks();
+    }
+
+    /// Playing on the fallback stream (so the resume must use stream 1).
+    RadioAudioHandler playing(FakeAsync async) {
+      final handler = handlerWith();
+      async.flushMicrotasks();
+      unawaited(
+        handler.playFromMediaId(_mediaId(station), {
+          RadioAudioHandler.startStreamIndexExtra: 1,
+        }),
+      );
+      async.flushMicrotasks();
+      ready(async);
+      expect(handler.status, isA<Playing>());
+      expect(player.lastLoad.uri, second.url);
+      return handler;
+    }
+
+    void focus(FakeAsync async, FocusChange change) {
+      session.emitFocus(change);
+      async.flushMicrotasks();
+    }
+
+    void noisy(FakeAsync async) {
+      session.emitNoisy();
+      async.flushMicrotasks();
+    }
+
+    for (final minutes in [1, 15]) {
+      test('a $minutes-minute call: Interrupted with the transport stopped, '
+          'focus kept and the notification up; after hang-up a fresh load of '
+          'the last working stream, then Playing', () {
+        fakeAsync((async) {
+          final handler = playing(async);
+          final stops = player.stopCalls;
+          focus(async, FocusChange.transientLoss);
+          expect(handler.status, PlaybackStatus.interrupted(station: station));
+          expect(player.stopCalls, stops + 1);
+          expect(session.releaseCalls, 0);
+          final state = handler.playbackState.value;
+          expect(state.playing, isTrue);
+          expect(state.processingState, AudioProcessingState.buffering);
+          expect(handler.mediaItem.value?.displaySubtitle, 'Interrupted');
+
+          async.elapse(Duration(minutes: minutes));
+          expect(handler.status, isA<Interrupted>());
+          expect(player.loads, hasLength(1));
+
+          focus(async, FocusChange.gainAfterPause);
+          expect(player.loads, hasLength(2));
+          expect(player.lastLoad.uri, second.url);
+          expect(
+            player.lastLoad.generation,
+            greaterThan(player.loads.first.generation),
+          );
+          expect(handler.status, isA<Connecting>());
+          expect(handler.playbackState.value.playing, isTrue);
+          ready(async);
+          expect(handler.status, isA<Playing>());
+          expect(session.releaseCalls, 0);
+        });
+      });
+    }
+
+    test('network changes during a call reload nothing', () {
+      fakeAsync((async) {
+        final handler = playing(async);
+        focus(async, FocusChange.transientLoss);
+        connectivity.emit(online: false);
+        async.flushMicrotasks();
+        connectivity.emit(online: true, networkChanged: true);
+        async.elapse(const Duration(minutes: 5));
+        expect(handler.status, isA<Interrupted>());
+        expect(player.loads, hasLength(1));
+      });
+    });
+
+    test('another media app (permanent loss): Paused, focus released, '
+        'playing false; a later gain does not resume', () {
+      fakeAsync((async) {
+        final handler = playing(async);
+        focus(async, FocusChange.permanentLoss);
+        expect(handler.status, PlaybackStatus.paused(station: station));
+        expect(session.releaseCalls, 1);
+        expect(handler.playbackState.value.playing, isFalse);
+        focus(async, FocusChange.gainAfterPause);
+        async.elapse(const Duration(minutes: 10));
+        expect(player.loads, hasLength(1));
+        expect(handler.status, isA<Paused>());
+      });
+    });
+
+    test('unplugging headphones (becoming noisy): Paused, focus released; '
+        'nothing resumes it', () {
+      fakeAsync((async) {
+        final handler = playing(async);
+        noisy(async);
+        expect(handler.status, PlaybackStatus.paused(station: station));
+        expect(session.releaseCalls, 1);
+        expect(handler.playbackState.value.playing, isFalse);
+        focus(async, FocusChange.gainAfterPause);
+        connectivity.emit(online: true, networkChanged: true);
+        async.elapse(const Duration(minutes: 10));
+        expect(player.loads, hasLength(1));
+        expect(handler.status, isA<Paused>());
+      });
+    });
+
+    test('Bluetooth disconnect during a call: Paused, and hang-up does not '
+        'resume', () {
+      fakeAsync((async) {
+        final handler = playing(async);
+        focus(async, FocusChange.transientLoss);
+        noisy(async);
+        expect(handler.status, isA<Paused>());
+        expect(session.releaseCalls, 1);
+        focus(async, FocusChange.gainAfterPause);
+        async.elapse(const Duration(minutes: 1));
+        expect(player.loads, hasLength(1));
+      });
+    });
+
+    test('a navigation prompt ducks to 0.3 and restores 1.0 without '
+        'stopping playback', () {
+      fakeAsync((async) {
+        final handler = playing(async);
+        final stops = player.stopCalls;
+        focus(async, FocusChange.duckBegin);
+        expect(player.volumes, [0.3]);
+        expect(handler.status, isA<Playing>());
+        focus(async, FocusChange.duckEnd);
+        expect(player.volumes, [0.3, 1.0]);
+        expect(handler.status, isA<Playing>());
+        expect(player.stopCalls, stops);
+        expect(player.loads, hasLength(1));
+      });
+    });
+
+    test('pause during a duck restores full volume for the next play', () {
+      fakeAsync((async) {
+        final handler = playing(async);
+        focus(async, FocusChange.duckBegin);
+        unawaited(handler.pause());
+        async.flushMicrotasks();
+        expect(player.volumes, [0.3, 1.0]);
+      });
+    });
+
+    test('pause or stop during a call: Paused / Idle with focus released', () {
+      fakeAsync((async) {
+        final handler = playing(async);
+        focus(async, FocusChange.transientLoss);
+        unawaited(handler.pause());
+        async.flushMicrotasks();
+        expect(handler.status, PlaybackStatus.paused(station: station));
+        expect(session.releaseCalls, 1);
+        focus(async, FocusChange.gainAfterPause);
+        expect(player.loads, hasLength(1));
+      });
+      fakeAsync((async) {
+        final handler = playing(async);
+        focus(async, FocusChange.transientLoss);
+        unawaited(handler.stop());
+        async.flushMicrotasks();
+        expect(handler.status, const PlaybackStatus.idle());
+        expect(
+          handler.playbackState.value.processingState,
+          AudioProcessingState.idle,
+        );
+        focus(async, FocusChange.gainAfterPause);
+        expect(player.loads, hasLength(1));
+      });
+    });
+
+    for (final (label, command) in [
+      ('pause', (RadioAudioHandler h) => h.pause()),
+      ('stop', (RadioAudioHandler h) => h.stop()),
+    ]) {
+      test('after a user $label, gain, noisy and online events start nothing '
+          '(PLAY-10)', () {
+        fakeAsync((async) {
+          final handler = playing(async);
+          unawaited(command(handler));
+          async.flushMicrotasks();
+          final status = handler.status;
+          focus(async, FocusChange.gainAfterPause);
+          noisy(async);
+          connectivity.emit(online: false);
+          async.flushMicrotasks();
+          connectivity.emit(online: true, networkChanged: true);
+          async.elapse(const Duration(minutes: 15));
+          expect(player.loads, hasLength(1));
+          expect(handler.status, status);
+          expect(handler.playbackState.value.playing, isFalse);
+        });
+      });
+    }
+
+    test('in PlaybackError, gain, noisy and online events start nothing '
+        '(PLAY-10)', () {
+      fakeAsync((async) {
+        final handler = handlerWith();
+        async.flushMicrotasks();
+        player.onLoad = (_, generation) =>
+            scheduleMicrotask(() => player.emitFailure(generation: generation));
+        unawaited(handler.playFromMediaId(_mediaId(station)));
+        async.flushMicrotasks();
+        expect(handler.status, isA<PlaybackError>());
+        player.onLoad = null;
+        final loads = player.loads.length;
+        focus(async, FocusChange.gainAfterPause);
+        noisy(async);
+        connectivity.emit(online: true, networkChanged: true);
+        async.elapse(const Duration(minutes: 15));
+        expect(player.loads, hasLength(loads));
+        expect(handler.status, isA<PlaybackError>());
+      });
+    });
+  });
 }
