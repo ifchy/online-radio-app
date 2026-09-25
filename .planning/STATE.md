@@ -4,16 +4,16 @@ milestone: v1.0
 current_phase: 01
 current_phase_name: Playback Engine & Walking Skeleton
 status: executing
-stopped_at: Completed 01-08-PLAN.md
-last_updated: "2026-09-25T16:39:08.603Z"
+stopped_at: Completed 01-09-PLAN.md
+last_updated: "2026-09-25T17:01:54.827Z"
 last_activity: 2026-09-25
-last_activity_desc: Completed 01-08 Cyrillic ICY now-playing on the notification, lock screen and mini-player, never stale
-state_head: f52bbf8485b3eeee41e5a061cb39ffcdf041c520
+last_activity_desc: Completed 01-09 fallback-stream rotation through a pure state machine, next/previous within the list, engine diagnostics
+state_head: 6a549d1fa1bb3f8a225afefd0389a5e62868a53e
 progress:
   total_phases: 4
   completed_phases: 0
   total_plans: 13
-  completed_plans: 7
+  completed_plans: 8
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-09-24)
 ## Current Position
 
 Phase: 01 (Playback Engine & Walking Skeleton) — EXECUTING
-Plan: 7 of 13 complete (01-01, 01-03, 01-04, 01-05, 01-06, 01-07, 01-08); 01-02 (Wave 2) still open, waiting on the owner's keystore
+Plan: 8 of 13 complete (01-01, 01-03, 01-04, 01-05, 01-06, 01-07, 01-08, 01-09); 01-02 (Wave 2) still open, waiting on the owner's keystore
 Status: Ready to execute
-Last activity: 2026-09-25 — Completed 01-08 Cyrillic ICY now-playing on the notification, lock screen and mini-player, never stale
+Last activity: 2026-09-25 — Completed 01-09 fallback-stream rotation through a pure state machine, next/previous within the list, engine diagnostics
 
-Progress: [█████░░░░░] 54% (7/13 plans in Phase 01)
+Progress: [██████░░░░] 62% (8/13 plans in Phase 01)
 
 ## Performance Metrics
 
@@ -66,6 +66,7 @@ Progress: [█████░░░░░] 54% (7/13 plans in Phase 01)
 | Phase 01 P05 | 6 min | 2 tasks | 7 files |
 | Phase 01 P07 | 8 min | 2 tasks | 13 files |
 | Phase 01 P08 | 10 min | 3 tasks | 11 files |
+| Phase 01 P09 | 16 min | 2 tasks | 10 files |
 
 ## Accumulated Context
 
@@ -104,6 +105,11 @@ Recent decisions affecting current work:
 - [Phase 01]: [01-08]: RadioAudioHandler shows ICY now-playing only for the current generation after its first ready snapshot (_readySeenForGeneration, reset by _nextGeneration); pre-ready titles are dropped, not held, so a stale native title cannot leak
 - [Phase 01]: [01-08]: _setNowPlaying is the single now-playing write path (dedupe by NowPlaying value, then sameMediaItem); _setNowPlaying(null) clears it on every start/switch, pause, stop and failure; later plans that supersede a load must use _nextGeneration()
 - [Phase 01]: [01-08]: mediaItemFor(..., nowPlaying:) shows the ICY text (artist = artist ?? text, displaySubtitle = text) only while Playing; the title is always the station name; the mini-player reuses its live-region line for the same text via nowPlayingProvider
+- [Phase 01]: [01-09]: Playback runs through the pure PlaybackStateMachine (state_machine.dart, no Flutter/plugin imports); RadioAudioHandler only executes its commands on one serial queue, publishing station, media item and PlaybackState before any command (Pitfall G). New behaviour = a reducer row + a pure test
+- [Phase 01]: [01-09]: Fallback rotation: next resolved candidate, then next stream, a new generation per load, 10 s connect timer per attempt (EngineTimings); a round ends back at the start stream; a station that never played errors after 2 rounds with allStreamsFailed (unsupportedFormat if every failure was a format failure), stopping transport, focus and all timers
+- [Phase 01]: [01-09]: The reducer owns the generation counter (01-08's _nextGeneration is gone); the handler resets _readySeenForGeneration on every generation change. Stale events return the same state with no commands; only UserPlay/UserResume leave Paused, Idle and Error (PLAY-10)
+- [Phase 01]: [01-09]: Headset/car next/previous (MediaButton.next/previous -> skipToNext/skipToPrevious) restart PlayContext.neighbour with the same list, wrapping; single or one-station lists do nothing; not in the notification until Phase 3 (D-12). engine.play(startStreamIndex:) goes through the playFromMediaId extras key 'startStreamIndex' (ints only)
+- [Phase 01]: [01-09]: Until 01-10, a failure or completed while Playing/Buffering is Error(streamUnreachable) in the reducer; 01-10 replaces that row (and the everPlayed round-end row) with Reconnecting from lastWorkingStreamIndex and fills EngineDiagnostics.reconnectAttempt/nextRetryDelay
 
 ### Pending Todos
 
@@ -133,6 +139,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-09-25T16:39:02.014Z
-Stopped at: Completed 01-08-PLAN.md
+Last session: 2026-09-25T17:01:45.003Z
+Stopped at: Completed 01-09-PLAN.md
 Resume file: None
