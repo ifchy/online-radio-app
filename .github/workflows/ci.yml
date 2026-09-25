@@ -157,8 +157,8 @@ jobs:
           aapt2="$ANDROID_HOME/build-tools/$build_tools/aapt2"
           echo "Using $aapt2"
           badging="$("$aapt2" dump badging "$APK")"
-          grep -E "^(package|sdkVersion|targetSdkVersion)" <<<"$badging"
-          if ! grep -qx "sdkVersion:'24'" <<<"$badging"; then
+          grep -E "^(package|sdkVersion|minSdkVersion|targetSdkVersion)" <<<"$badging"
+          if ! grep -qxE "(sdkVersion|minSdkVersion):'24'" <<<"$badging"; then
             echo "::error::Release APK minSdk is not 24."
             exit 1
           fi
