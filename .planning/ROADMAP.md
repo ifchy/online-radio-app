@@ -37,7 +37,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. A phone call with the screen off pauses the radio, and it resumes after hang-up. Navigation prompts duck the audio. Unplugging headphones or disconnecting Bluetooth pauses it. Resuming after a 5-minute user pause plays live audio, not stale buffer. Nothing restarts playback that the user paused or stopped.
   5. The app installs on Android 7.0 (minSdk 24) through current Android (target 36). Every PR runs `flutter analyze` and `flutter test` in CI, version tags produce a signed release AAB, and no key or secret exists in the public repo. The first-launch date is stored on the very first run, and no tracking SDK is present.
 
-**Plans**: 10/13 plans executed (8 waves)
+**Plans**: 11/13 plans executed (8 waves)
 
 Plans:
 **Wave 1**
@@ -67,7 +67,7 @@ Plans:
 **Wave 6** *(blocked on Wave 5 completion)*
 
 - [x] 01-10-PLAN.md — Drop/stall reconnect at the live edge with backoff and the RetryBudget presets (online budget)
-- [ ] 01-11-PLAN.md — Debug/profile-only diagnostics panel with a per-stream switcher
+- [x] 01-11-PLAN.md — Debug/profile-only diagnostics panel with a per-stream switcher
 
 **Wave 7** *(blocked on Wave 6 completion)*
 
@@ -141,7 +141,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Playback Engine & Walking Skeleton | 10/13 | In Progress|  |
+| 1. Playback Engine & Walking Skeleton | 11/13 | In Progress|  |
 | 2. Station Catalogue, Search & Browse | 0/TBD | Not started | - |
 | 3. Listening Experience | 0/TBD | Not started | - |
 | 4. Hardening, Closed Testing & Store Release | 0/TBD | Not started | - |

@@ -18,7 +18,7 @@ Requirements for initial release (milestone v1.0). Each maps to exactly one road
 - [ ] **PLAY-05**: Playback ducks for navigation prompts, pauses for phone calls and other apps, and resumes after a transient interruption — unless the user had paused
 - [ ] **PLAY-06**: Playback pauses when headphones are unplugged or Bluetooth audio disconnects ("becoming noisy")
 - [x] **PLAY-07**: After a stream drop, stall or Wi-Fi ↔ mobile data switch, playback automatically reconnects at the live edge within ~10 s, with backoff and a bounded retry budget, while the foreground service stays alive
-- [ ] **PLAY-08**: When a station's primary stream fails, the app automatically tries its fallback streams in priority order
+- [x] **PLAY-08**: When a station's primary stream fails, the app automatically tries its fallback streams in priority order
 - [ ] **PLAY-09**: User sees clear connecting / buffering / reconnecting / live states and a friendly error state that distinguishes "no internet" from "station unreachable"
 - [x] **PLAY-10**: User stops and pauses (including sleep timer and becoming-noisy) are treated as deliberate — reconnect logic never restarts playback the user stopped
 - [x] **PLAY-11**: Resuming after a pause always rejoins the live stream (never stale buffered audio); no seek bar is shown for live radio
@@ -65,7 +65,7 @@ Requirements for initial release (milestone v1.0). Each maps to exactly one road
 - [ ] **APP-03**: User sees a mini-player on all browse screens and can open a full "now playing" screen with large, driver-friendly controls
 - [ ] **APP-04**: User can report a broken station (prefilled email with station id, stream, error type, app/Android version — no personal data, no backend)
 - [ ] **APP-05**: User can open an About screen with privacy policy link and open-source licences
-- [ ] **APP-06**: App records the first-launch date locally from the very first launch (reserved for the future ads rule; unused in v1)
+- [x] **APP-06**: App records the first-launch date locally from the very first launch (reserved for the future ads rule; unused in v1)
 - [ ] **APP-07**: Media controls work with notification permission denied on Android 13+; if a permission prompt is needed at all, it is asked at first play and denial degrades gracefully
 - [ ] **APP-08**: If the OS kills playback, user sees a one-time, optional hint that opens battery-optimisation settings (never requests the exemption directly)
 - [ ] **APP-09**: All controls have TalkBack labels, support large text, meet contrast guidelines, and player controls have large touch targets
@@ -144,7 +144,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PLAY-05 | Phase 1 | Pending |
 | PLAY-06 | Phase 1 | Pending |
 | PLAY-07 | Phase 1 | Complete |
-| PLAY-08 | Phase 1 | Pending |
+| PLAY-08 | Phase 1 | Complete |
 | PLAY-09 | Phase 4 | Pending |
 | PLAY-10 | Phase 1 | Complete |
 | PLAY-11 | Phase 1 | Complete |
@@ -176,7 +176,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | APP-03 | Phase 3 | Pending |
 | APP-04 | Phase 4 | Pending |
 | APP-05 | Phase 4 | Pending |
-| APP-06 | Phase 1 | Pending |
+| APP-06 | Phase 1 | Complete |
 | APP-07 | Phase 1 | Pending |
 | APP-08 | Phase 4 | Pending |
 | APP-09 | Phase 4 | Pending |

@@ -195,3 +195,7 @@ None.
 ---
 *Phase: 01-playback-engine-walking-skeleton*
 *Completed: 2026-09-25*
+
+## Self-Check: PASSED
+
+All 5 created or modified files exist. Commits 7a338fc, 9f4cb14, 5018deb and 4a6f3ec are in git, and no tracked file was deleted. The TDD gate commits are in order: test(01-11) before feat(01-11) for both tasks. The grep gates pass (kReleaseMode in home_screen.dart; `class DebugPanel`; debug_panel.dart imported only by home_screen.dart; startStreamIndex in debug_panel.dart). The plan-level verification (`flutter pub get && dart run build_runner build -d && flutter analyze && dart analyze && flutter test`) passes with 437 tests.
