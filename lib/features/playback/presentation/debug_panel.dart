@@ -3,7 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/settings/settings_repository.dart';
 import '../application/playback_providers.dart';
+import '../../catalog/domain/station.dart';
 import '../domain/engine_diagnostics.dart';
+import '../domain/play_context.dart';
 
 /// What the engine is doing, for the owner's device checks (D-07).
 ///
@@ -60,6 +62,17 @@ class DebugPanel extends ConsumerWidget {
           Text('Time-to-audio: ${_ms(d.lastTimeToAudio)}'),
           Text('First launch: ${firstLaunch.toUtc().toIso8601String()}'),
           const SizedBox(height: 16),
+          Text('Streams', style: theme.textTheme.titleMedium),
+          if (station == null)
+            const Text('No station')
+          else
+            for (var i = 0; i < station.streams.length; i++)
+              _StreamRow(
+                station: station,
+                index: i,
+                inUse: station.id == d.stationId && i == d.streamIndex,
+              ),
+          const SizedBox(height: 16),
           Text(
             'Events (newest first, max ${EngineDiagnostics.maxRecentEvents})',
             style: theme.textTheme.titleMedium,
@@ -89,5 +102,67 @@ class DebugPanel extends ConsumerWidget {
     String two(int v) => v.toString().padLeft(2, '0');
     return '${two(t.hour)}:${two(t.minute)}:${two(t.second)}.'
         '${t.millisecond.toString().padLeft(3, '0')}';
+  }
+}
+
+/// One `streams[i]` of the current station, with a button that starts
+/// playback from it (SC1: every official endpoint is proven to play).
+///
+/// Only URLs already in the curated station data can be played, and only in
+/// debug and profile builds (T-11-03). If the stream fails, the engine's
+/// fallback rotation still applies, as for any start.
+class _StreamRow extends ConsumerWidget {
+  const _StreamRow({
+    required this.station,
+    required this.index,
+    required this.inUse,
+  });
+
+  final Station station;
+  final int index;
+  final bool inUse;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final stream = station.streams[index];
+    final bitrate = stream.bitrateKbps == null
+        ? DebugPanel._none
+        : '${stream.bitrateKbps} kbps';
+    final smallText = Theme.of(context).textTheme.bodySmall;
+    return Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '#$index ${stream.kind.name} · '
+                '${stream.codec ?? DebugPanel._none} · $bitrate',
+                style: inUse
+                    ? const TextStyle(fontWeight: FontWeight.bold)
+                    : null,
+              ),
+              Text('${stream.url}', style: smallText),
+            ],
+          ),
+        ),
+        Tooltip(
+          message: 'Play stream $index',
+          child: TextButton(
+            // The engine exposes no current PlayContext, so the switcher
+            // starts the station on its own (next/previous then do nothing
+            // until it is started from a list again).
+            onPressed: () => ref
+                .read(audioEngineProvider)
+                .play(
+                  station,
+                  context: const PlayContext.single(),
+                  startStreamIndex: index,
+                ),
+            child: Text('Play #$index'),
+          ),
+        ),
+      ],
+    );
   }
 }
