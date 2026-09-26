@@ -6,6 +6,7 @@ import 'package:radio/features/playback/domain/engine_diagnostics.dart';
 import 'package:radio/features/playback/domain/now_playing.dart';
 import 'package:radio/features/playback/domain/play_context.dart';
 import 'package:radio/features/playback/domain/playback_status.dart';
+import 'package:radio/features/playback/domain/retry_budget.dart';
 import 'package:radio/features/playback/engine/ports.dart';
 
 /// A recorded [FakeEngine.play] call.
@@ -43,6 +44,9 @@ class FakeEngine implements AudioEngine {
   int stopCalls = 0;
   int skipToNextCalls = 0;
   int skipToPreviousCalls = 0;
+
+  /// Every [setRetryBudget] call, in order.
+  final List<RetryBudgetPreset> retryBudgetCalls = [];
 
   /// Publishes [diagnostics] as the engine's diagnostics.
   void setDiagnostics(EngineDiagnostics diagnostics) {
@@ -107,6 +111,10 @@ class FakeEngine implements AudioEngine {
 
   @override
   Future<void> stop() async => stopCalls++;
+
+  @override
+  Future<void> setRetryBudget(RetryBudgetPreset preset) async =>
+      retryBudgetCalls.add(preset);
 
   static Stream<T> _replayLatest<T>(T Function() latest, Stream<T> changes) =>
       Stream<T>.multi((controller) {
@@ -282,16 +290,98 @@ class FakeStreamResolver implements StreamResolver {
   void invalidate(StationStream stream) => invalidated.add(stream);
 }
 
-/// [AudioSessionPort] that counts focus releases.
+/// [AudioSessionPort] that counts focus releases and lets tests emit focus
+/// changes and becoming-noisy events. Events are delivered synchronously.
 class FakeAudioSessionPort implements AudioSessionPort {
   FakeAudioSessionPort([CallLog? log]) : log = log ?? CallLog();
 
   final CallLog log;
   int releaseCalls = 0;
 
+  final _focusChanges = StreamController<FocusChange>.broadcast(sync: true);
+  final _becomingNoisy = StreamController<void>.broadcast(sync: true);
+
   @override
   Future<void> release() async {
     releaseCalls++;
     log.add('release');
   }
+
+  @override
+  Stream<FocusChange> get focusChanges => _focusChanges.stream;
+
+  @override
+  Stream<void> get becomingNoisy => _becomingNoisy.stream;
+
+  /// Emits [change] as if Android changed our audio focus.
+  void emitFocus(FocusChange change) => _focusChanges.add(change);
+
+  /// Emits a becoming-noisy event (headphones unplugged, Bluetooth gone).
+  void emitNoisy() => _becomingNoisy.add(null);
+
+  Future<void> close() async {
+    await _focusChanges.close();
+    await _becomingNoisy.close();
+  }
+}
+
+/// [ConnectivityPort] with a settable online value and scripted changes.
+/// Changes are delivered synchronously.
+class FakeConnectivityPort implements ConnectivityPort {
+  FakeConnectivityPort({this.online = true});
+
+  /// What [isOnline] answers.
+  bool online;
+
+  /// How many times [isOnline] was asked.
+  int isOnlineCalls = 0;
+
+  final _changes = StreamController<ConnectivityChange>.broadcast(sync: true);
+
+  @override
+  Stream<ConnectivityChange> get changes => _changes.stream;
+
+  @override
+  Future<bool> isOnline() async {
+    isOnlineCalls++;
+    return online;
+  }
+
+  /// Emits a change and makes [isOnline] answer [online] from now on.
+  void emit({required bool online, bool networkChanged = false}) {
+    this.online = online;
+    _changes.add(
+      ConnectivityChange(online: online, networkChanged: networkChanged),
+    );
+  }
+
+  Future<void> close() => _changes.close();
+}
+
+/// [WifiLockPort] that counts acquire and release calls and tracks whether
+/// the lock is held (non-reference-counted, like the real lock).
+class FakeWifiLockPort implements WifiLockPort {
+  FakeWifiLockPort([CallLog? log]) : log = log ?? CallLog();
+
+  final CallLog log;
+  int acquireCalls = 0;
+  int releaseCalls = 0;
+  bool held = false;
+
+  @override
+  Future<void> acquire() async {
+    acquireCalls++;
+    held = true;
+    log.add('wifi acquire');
+  }
+
+  @override
+  Future<void> release() async {
+    releaseCalls++;
+    held = false;
+    log.add('wifi release');
+  }
+
+  @override
+  Future<bool> isHeld() async => held;
 }

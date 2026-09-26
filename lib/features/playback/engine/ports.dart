@@ -94,10 +94,96 @@ abstract interface class StreamPlayer {
   Future<void> dispose();
 }
 
+/// An audio-focus change, as the engine sees it (RESEARCH Pattern 1 mapping
+/// table).
+enum FocusChange {
+  /// Focus lost for a while, e.g. a phone call (AUDIOFOCUS_LOSS_TRANSIENT).
+  transientLoss,
+
+  /// Focus lost for good, e.g. another media app started (AUDIOFOCUS_LOSS).
+  /// No gain ever follows it.
+  permanentLoss,
+
+  /// Another app plays briefly over us, e.g. a navigation prompt
+  /// (AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK).
+  duckBegin,
+
+  /// The ducking app is done (AUDIOFOCUS_GAIN after a duck).
+  duckEnd,
+
+  /// Focus is back after a transient loss (AUDIOFOCUS_GAIN after a pause).
+  gainAfterPause,
+}
+
 /// Audio focus as the handler needs it. Focus is requested by the player on
 /// play; releasing it is the handler's job (just_audio never abandons focus).
+///
+/// The engine is the single owner of focus and becoming-noisy events:
+/// just_audio runs with `handleInterruptions: false` (ARCHITECTURE
+/// Anti-Pattern 3).
 abstract interface class AudioSessionPort {
+  /// Abandons audio focus.
   Future<void> release();
+
+  /// Focus changes while the app holds (or held) a focus request.
+  Stream<FocusChange> get focusChanges;
+
+  /// Headphones unplugged or Bluetooth audio disconnected
+  /// (ACTION_AUDIO_BECOMING_NOISY). Only delivered while focus is held.
+  Stream<void> get becomingNoisy;
+}
+
+/// A debounced network-state change (RESEARCH "Transition rules",
+/// ARCHITECTURE Pattern 4).
+final class ConnectivityChange {
+  const ConnectivityChange({
+    required this.online,
+    required this.networkChanged,
+  });
+
+  /// Whether any network is up.
+  final bool online;
+
+  /// Whether the device moved to a different set of networks than the last
+  /// one it was online on (for example Wi-Fi to mobile data). Always false
+  /// when [online] is false.
+  final bool networkChanged;
+
+  @override
+  bool operator ==(Object other) =>
+      other is ConnectivityChange &&
+      other.online == online &&
+      other.networkChanged == networkChanged;
+
+  @override
+  int get hashCode => Object.hash(online, networkChanged);
+
+  @override
+  String toString() =>
+      'ConnectivityChange(${online ? 'online' : 'offline'}'
+      '${networkChanged ? ', network changed' : ''})';
+}
+
+/// Network state as the handler needs it. Until told otherwise the network
+/// counts as online.
+abstract interface class ConnectivityPort {
+  /// Debounced changes: emitted only when the online flag or the network set
+  /// differs from the last state seen (by [isOnline] or an earlier change).
+  Stream<ConnectivityChange> get changes;
+
+  /// Whether any network is up now.
+  Future<bool> isOnline();
+}
+
+/// The Wi-Fi lock that keeps the Wi-Fi radio awake with the screen off
+/// (PLAT-03). just_audio holds none, so the engine takes one itself, and
+/// only while audio is live or recovering (PLAT-06, T-13-01).
+abstract interface class WifiLockPort {
+  Future<void> acquire();
+
+  Future<void> release();
+
+  Future<bool> isHeld();
 }
 
 /// Turns a catalogue [StationStream] into directly playable endpoints.

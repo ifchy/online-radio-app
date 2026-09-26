@@ -3,17 +3,17 @@ gsd_state_version: "1.0"
 milestone: v1.0
 current_phase: 01
 current_phase_name: Playback Engine & Walking Skeleton
-status: executing
-stopped_at: Completed 01-09-PLAN.md
-last_updated: "2026-09-25T17:01:54.827Z"
+status: verifying
+stopped_at: Completed 01-13-PLAN.md
+last_updated: "2026-09-25T20:31:18.489Z"
 last_activity: 2026-09-25
-last_activity_desc: Completed 01-09 fallback-stream rotation through a pure state machine, next/previous within the list, engine diagnostics
-state_head: 6a549d1fa1bb3f8a225afefd0389a5e62868a53e
+last_activity_desc: Completed 01-13 (audio focus + Wi-Fi lock)
+state_head: 3b04225593874f533d4f57badfa5656b5c3dd59d
 progress:
   total_phases: 4
   completed_phases: 0
   total_plans: 13
-  completed_plans: 8
+  completed_plans: 13
 ---
 
 # Project State
@@ -27,12 +27,12 @@ See: .planning/PROJECT.md (updated 2026-09-24)
 
 ## Current Position
 
-Phase: 01 (Playback Engine & Walking Skeleton) — EXECUTING
-Plan: 8 of 13 complete (01-01, 01-03, 01-04, 01-05, 01-06, 01-07, 01-08, 01-09); 01-02 (Wave 2) still open, waiting on the owner's keystore
-Status: Ready to execute
-Last activity: 2026-09-25 — Completed 01-09 fallback-stream rotation through a pure state machine, next/previous within the list, engine diagnostics
+Phase: 01 (Playback Engine & Walking Skeleton) — VERIFYING
+Plan: 13 of 13 — all complete (01-01 to 01-13); end-of-phase verification and the owner's device matrix are next
+Status: Phase complete — ready for verification
+Last activity: 2026-09-25 — Completed 01-13 (audio focus + Wi-Fi lock)
 
-Progress: [██████░░░░] 62% (8/13 plans in Phase 01)
+Progress: [██████████] 100% (13/13 plans in Phase 01)
 
 ## Performance Metrics
 
@@ -67,6 +67,11 @@ Progress: [██████░░░░] 62% (8/13 plans in Phase 01)
 | Phase 01 P07 | 8 min | 2 tasks | 13 files |
 | Phase 01 P08 | 10 min | 3 tasks | 11 files |
 | Phase 01 P09 | 16 min | 2 tasks | 10 files |
+| Phase 01 P02 | 1 day (owner step) | 2 tasks | 5 files |
+| Phase 01 P10 | 11 min | 2 tasks | 11 files |
+| Phase 01 P11 | 5 min | 2 tasks | 5 files |
+| Phase 01 P12 | 8 min | 2 tasks | 11 files |
+| Phase 01 P13 | 11 min | 2 tasks | 13 files |
 
 ## Accumulated Context
 
@@ -110,6 +115,21 @@ Recent decisions affecting current work:
 - [Phase 01]: [01-09]: The reducer owns the generation counter (01-08's _nextGeneration is gone); the handler resets _readySeenForGeneration on every generation change. Stale events return the same state with no commands; only UserPlay/UserResume leave Paused, Idle and Error (PLAY-10)
 - [Phase 01]: [01-09]: Headset/car next/previous (MediaButton.next/previous -> skipToNext/skipToPrevious) restart PlayContext.neighbour with the same list, wrapping; single or one-station lists do nothing; not in the notification until Phase 3 (D-12). engine.play(startStreamIndex:) goes through the playFromMediaId extras key 'startStreamIndex' (ints only)
 - [Phase 01]: [01-09]: Until 01-10, a failure or completed while Playing/Buffering is Error(streamUnreachable) in the reducer; 01-10 replaces that row (and the everPlayed round-end row) with Reconnecting from lastWorkingStreamIndex and fills EngineDiagnostics.reconnectAttempt/nextRetryDelay
+- [Phase 01]: [01-10]: Drops, completed and 8 s stalls go to Reconnecting (playing true, FGS kept) with backoff 0/1/2/4/8/15/30 s ±20 % from ReconnectPolicy.delayFor; a retry is Connecting from lastWorkingStreamIndex, then rotates; a failed retry round backs off as the next attempt
+- [Phase 01]: [01-10]: RetryBudgetClock lives in EngineState (pure). recovered() stops it while a retry plays; 30 s stable Playing resets budget and attempt. Standard gives up after 3 min failing online with PlaybackError(streamUnreachable) and full release; offline exhaustion maps to PlaybackError(offline) once 01-12 feeds onConnectivity
+- [Phase 01]: [01-10]: The budget timer is the only TimerFired not guarded by generation (it spans an outage's retries); its guard is budget.running + an outage status, and it re-arms if early. UserPlay/UserResume now start with CancelAllTimers
+- [Phase 01]: [01-10]: AudioEngine.setRetryBudget(standard|trip|batterySaver) is the single D-10 setting; it reaches the reducer as SetRetryBudget and re-arms the budget timer mid-outage. The notification alternates 'Повторно свързване…' (waiting) and 'Свързване…' (retry loading)
+- [Phase 01]: [01-11]: The debug panel (D-07) opens only from HomeScreen's Debug action behind showDebugTools = !kReleaseMode; debug_panel.dart may be imported only by home_screen.dart. It renders providers only (no I/O), so diagnostics stay in memory
+- [Phase 01]: [01-11]: The panel's stream switcher starts a station with PlayContext.single() and startStreamIndex i (AudioEngine exposes no current PlayContext); labels are plain English and outside the BG copy review
+- [Phase 01]: [01-12]: Network state enters the reducer as ConnectivityChanged from a 500 ms-debounced ConnectivityPort (connectivity_plus only in connectivity_port_impl.dart); EngineState.online is a getter over the budget clock's flag. The adapter reports only differences from the last state seen (isOnline sets the baseline)
+- [Phase 01]: [01-12]: Offline during an outage -> Reconnecting(waitingForNetwork) with no backoff and only the offline budget running (standard 10 min -> PlaybackError(offline), full release); offline while Playing/Buffering only records the flag, and the stall watchdog or a failure takes over
+- [Phase 01]: [01-12]: Online or a network change while Reconnecting/Buffering -> _reloadNow (retry from the last working stream, backoff reset, new generation); while Playing -> a 5 s flow check that reloads only if the current load's buffered position did not advance. Connecting, Paused, Idle and Error never react (PLAY-10)
+- [Phase 01]: [01-12]: RadioAudioHandler's 6th positional parameter is the ConnectivityPort (tests: FakeConnectivityPort); BufferedPositionChanged is reduced but never logged, so the 50-entry diagnostics log stays readable. Flow check on HLS may cause one spurious reload per network change; tune flowCheckDelay on device (A13)
+- [Phase 01]: [01-13]: Focus/noisy events are engine-owned reducer events: a transient loss in an active state -> Interrupted (transport stopped, generation bumped, timers and retry budget reset, focus and playing true kept); the gain resumes as a new session from lastWorkingStreamIndex keeping everPlayed, however long the call (D-11)
+- [Phase 01]: [01-13]: Permanent focus loss and becoming noisy reuse the user-pause row (focus released, never auto-resumed); in Paused/Idle/PlaybackError every focus, noisy and connectivity event gives no commands. Exactly two paths start playback without a user command: Interrupted+gain and Reconnecting+timer/connectivity
+- [Phase 01]: [01-13]: EngineState.ducked tracks a duck (0.3); any transition that releases focus while ducked appends SetVolume(1.0), and the resume after a call restores it first (no duckEnd arrives once focus is abandoned)
+- [Phase 01]: [01-13]: The Wi-Fi lock (MethodChannel bg.izk.radio/wifi_lock, WIFI_MODE_FULL_HIGH_PERF, non-reference-counted) is derived in the handler after each transition: held only in Connecting/Playing/Buffering/Reconnecting; the call is awaited only when the value changes so no-command transitions stay synchronous. WifiLockPort is the handler's 7th positional parameter (tests: FakeWifiLockPort)
+- [Phase 01]: [01-13]: onTaskRemoved stops only in Paused/Idle/PlaybackError. The Dart WifiLockChannel treats MissingPluginException as a no-op (engine started without an activity); v1.1 moves the channel into an in-repo plugin
 
 ### Pending Todos
 
@@ -139,6 +159,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-09-25T17:01:45.003Z
-Stopped at: Completed 01-09-PLAN.md
+Last session: 2026-09-25T20:31:18.465Z
+Stopped at: Completed 01-13-PLAN.md
 Resume file: None

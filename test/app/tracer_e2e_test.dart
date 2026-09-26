@@ -38,6 +38,7 @@ void main() {
       final log = CallLog();
       final player = FakeStreamPlayer(log);
       final session = FakeAudioSessionPort(log);
+      final wifiLock = FakeWifiLockPort();
       final directory = StationDirectory.phase1();
       // A progressive stream must never touch the network in Dart: the
       // resolver's client fails the test if it is ever called.
@@ -59,6 +60,8 @@ void main() {
         directory,
         resolver,
         strings,
+        FakeConnectivityPort(),
+        wifiLock,
       );
       final engine = AudioServiceEngine(handler);
       final station = directory.byId(StationId.curated('bg-radio'))!;
@@ -103,6 +106,8 @@ void main() {
       expect(handler.mediaItem.value?.title, station.name);
       expect(handler.mediaItem.value?.isLive, isTrue);
       expect(engine.currentStatus, isA<Connecting>());
+      // Wi-Fi stays awake while connecting and playing (PLAT-03).
+      expect(wifiLock.held, isTrue);
       final gen1 = player.lastLoad.generation;
 
       // 3. The player reports audio -> Playing, with Pause + Stop and no seek.
@@ -126,6 +131,8 @@ void main() {
       expect(player.stopCalls, stopsBeforePause + 1);
       expect(session.releaseCalls, 1);
       expect(engine.currentStatus, isA<Paused>());
+      // Paused holds nothing (PLAT-06, D-13).
+      expect(wifiLock.held, isFalse);
       state = handler.playbackState.value;
       expect(state.processingState, AudioProcessingState.ready);
       expect(state.playing, isFalse);
@@ -139,6 +146,7 @@ void main() {
       expect(player.loads, hasLength(2));
       final gen2 = player.lastLoad.generation;
       expect(gen2, greaterThan(gen1));
+      expect(wifiLock.held, isTrue);
       expect(player.lastLoad.uri, station.streams.first.url);
       expect(statesAtLoad.last.playing, isTrue);
       expect(statesAtLoad.last.processingState, AudioProcessingState.loading);
@@ -187,6 +195,8 @@ void main() {
       expect(stationEvents.first, isNull);
       expect(stationEvents, contains(station));
       expect(stationEvents.last, isNull);
+      expect(wifiLock.held, isFalse);
+      expect(wifiLock.acquireCalls, wifiLock.releaseCalls);
 
       // 8. Play from Android's media card after Stop (or a Bluetooth PLAY):
       //    the last station starts again with a fresh load; the recent root
@@ -207,6 +217,7 @@ void main() {
       await engine.stop();
       await tester.pump();
       expect(engine.currentStatus, isA<Idle>());
+      expect(wifiLock.held, isFalse);
     },
   );
 }

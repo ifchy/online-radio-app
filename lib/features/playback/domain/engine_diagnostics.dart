@@ -63,10 +63,10 @@ final class EngineDiagnostics {
   /// Passes over the stream list in this session, from 0.
   final int round;
 
-  /// Filled by reconnect (01-10); 0 until then.
+  /// Reconnect retries started in the current outage; 0 when there is none.
   final int reconnectAttempt;
 
-  /// Filled by reconnect (01-10); null until then.
+  /// The backoff of the current reconnect wait; null unless Reconnecting.
   final Duration? nextRetryDelay;
 
   /// From the user's play to the first audio, for the last successful start.

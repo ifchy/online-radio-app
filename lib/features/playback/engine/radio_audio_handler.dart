@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:collection';
+import 'dart:math';
 
 import 'package:audio_service/audio_service.dart';
 import 'package:clock/clock.dart';
@@ -12,9 +13,11 @@ import '../domain/media_id.dart';
 import '../domain/now_playing.dart';
 import '../domain/play_context.dart';
 import '../domain/playback_status.dart';
+import '../domain/retry_budget.dart';
 import 'icy/now_playing_parser.dart';
 import 'media_session_mapping.dart';
 import 'ports.dart';
+import 'reconnect_policy.dart';
 import 'state_machine.dart';
 
 /// The audio_service handler: the single owner of playback.
@@ -40,28 +43,68 @@ import 'state_machine.dart';
 ///   (PLAY-10).
 /// - A dead or slow stream falls over to the next candidate and stream; a
 ///   station that never plays is given up after two rounds (PLAY-08).
+/// - A drop, a `completed` or 8 s of Buffering reconnects at the live edge
+///   with backoff, keeping `playing: true` so the foreground service stays;
+///   the station is given up when the retry budget (D-10) is used up
+///   (PLAY-07).
 /// - Focus is released on pause, stop and error (Pitfall F).
+/// - The Wi-Fi lock is derived from the state after every transition: held
+///   in Connecting, Playing, Buffering and Reconnecting, released otherwise
+///   (PLAT-03, PLAT-06). A swipe from recents while nothing plays stops the
+///   service ([onTaskRemoved]).
 /// - Now-playing (ICY) is cleared on every start, pause, stop and error, and
 ///   only titles from the current load after it is ready are shown
 ///   (Pitfall E).
 ///
-/// Reconnect after a drop and interruptions arrive in later plans.
+/// - Network changes (the debounced [ConnectivityPort]) go through the same
+///   queue: offline during an outage waits without retrying until the
+///   offline budget runs out; back online or on another network it retries
+///   at once; a network change while Playing checks after 5 s that audio is
+///   still arriving (buffered position) and reloads only if not.
+///
+/// - Audio focus and becoming-noisy events (the [AudioSessionPort]) go
+///   through the same queue: a phone call interrupts (transport stopped,
+///   focus and the foreground service kept) and the station resumes live
+///   after hang-up, however long the call (D-11); a navigation prompt ducks
+///   the volume; another media app or unplugging headphones pauses, and
+///   nothing resumes it (PLAY-05, PLAY-06, PLAY-10).
 class RadioAudioHandler extends BaseAudioHandler {
   RadioAudioHandler(
     this._player,
     this._session,
     this._directory,
     this._resolver,
-    this._strings, {
+    this._strings,
+    this._connectivity,
+    this._wifiLock, {
     EngineTimings timings = const EngineTimings(),
     Clock? clock,
-  }) : _machine = PlaybackStateMachine(timings: timings),
-       _clockOverride = clock {
+    RetryBudgetPreset initialRetryBudget = RetryBudgetPreset.standard,
+    ReconnectPolicy? reconnectPolicy,
+  }) : _machine = PlaybackStateMachine(
+         policy: reconnectPolicy ?? ReconnectPolicy(Random()),
+         timings: timings,
+       ),
+       _clockOverride = clock,
+       _state = EngineState(
+         status: const PlaybackStatus.idle(),
+         budget: RetryBudgetClock(preset: initialRetryBudget),
+       ) {
     _subscriptions.addAll([
       _player.snapshots.listen(_onSnapshot),
       _player.failures.listen(_onFailure),
       _player.icyTitles.listen(_onIcyTitle),
+      _player.bufferedPositions.listen(_onBufferedPosition),
+      // The engine is the single owner of focus and noisy events; just_audio
+      // runs with handleInterruptions: false (Anti-Pattern 3).
+      _session.focusChanges.listen(
+        (change) => unawaited(_dispatch(FocusChanged(change))),
+      ),
+      _session.becomingNoisy.listen(
+        (_) => unawaited(_dispatch(const BecomingNoisy())),
+      ),
     ]);
+    unawaited(_watchConnectivity());
   }
 
   final StreamPlayer _player;
@@ -69,6 +112,8 @@ class RadioAudioHandler extends BaseAudioHandler {
   final StationDirectory _directory;
   final StreamResolver _resolver;
   final EngineStrings _strings;
+  final ConnectivityPort _connectivity;
+  final WifiLockPort _wifiLock;
   final PlaybackStateMachine _machine;
 
   /// Null: the zone's clock (fake under fakeAsync).
@@ -81,7 +126,7 @@ class RadioAudioHandler extends BaseAudioHandler {
   final _diagnosticsController =
       StreamController<EngineDiagnostics>.broadcast();
 
-  EngineState _state = const EngineState.initial();
+  EngineState _state;
   Station? _station;
 
   /// Events waiting to be reduced, each with the completer its caller awaits.
@@ -95,6 +140,9 @@ class RadioAudioHandler extends BaseAudioHandler {
 
   final Map<TimerKind, Timer> _timers = {};
   bool _disposed = false;
+
+  /// Whether the Wi-Fi lock was last asked to be held.
+  bool _wifiLockHeld = false;
 
   /// The last now-playing value published, or null.
   NowPlaying? _nowPlaying;
@@ -113,6 +161,9 @@ class RadioAudioHandler extends BaseAudioHandler {
 
   final _recentEvents = ListQueue<DiagnosticEvent>();
   Duration? _lastTimeToAudio;
+
+  /// The backoff of the latest reconnect wait, for diagnostics.
+  Duration? _lastBackoff;
   EngineDiagnostics _diagnostics = const EngineDiagnostics.initial();
 
   /// The `playFromMediaId` extras key (an int) for the stream to start at,
@@ -122,6 +173,15 @@ class RadioAudioHandler extends BaseAudioHandler {
 
   /// The list the next station started through [playFromMediaId] belongs to.
   PlayContext playContext = const PlayContext.single();
+
+  /// The reconnect give-up policy in force (D-10).
+  RetryBudgetPreset get retryBudget => _state.budget.preset;
+
+  /// Sets the reconnect give-up policy (D-10), the engine-level setting
+  /// behind `AudioEngine.setRetryBudget`. It goes through the event queue
+  /// like every other input, so it also applies to an outage in progress.
+  Future<void> setRetryBudget(RetryBudgetPreset preset) =>
+      _dispatch(SetRetryBudget(preset));
 
   PlaybackStatus get status => _state.status;
   Stream<PlaybackStatus> get statusStream => _statusController.stream;
@@ -239,6 +299,24 @@ class RadioAudioHandler extends BaseAudioHandler {
     await _settle();
   }
 
+  /// A swipe from recents (RESEARCH "Transition rules"): with nothing
+  /// playing (Paused, Idle or PlaybackError) the service and its
+  /// notification end; while a station plays, connects, reconnects or waits
+  /// out a call it keeps going. audio_service's default does nothing.
+  @override
+  Future<void> onTaskRemoved() async {
+    switch (_state.status) {
+      case Paused() || Idle() || PlaybackError():
+        await stop();
+      case Connecting() ||
+          Playing() ||
+          Buffering() ||
+          Reconnecting() ||
+          Interrupted():
+        break;
+    }
+  }
+
   /// Cancels timers and subscriptions. The app never disposes the handler;
   /// tests do.
   Future<void> dispose() async {
@@ -277,6 +355,12 @@ class RadioAudioHandler extends BaseAudioHandler {
         try {
           final transition = _machine.transition(_state, event, _now);
           _apply(event, transition.next);
+          // Only awaited when the lock changes: a transition with no
+          // commands must stay synchronous, so events queued back to back
+          // are reduced in the same turn.
+          if (wantsWifiLock(_state.status) != _wifiLockHeld) {
+            await _syncWifiLock();
+          }
           for (final command in transition.commands) {
             await _execute(command);
           }
@@ -331,7 +415,39 @@ class RadioAudioHandler extends BaseAudioHandler {
     if (station != null) _lastStation = station;
     _setStation(station);
     if (next.status != previous.status) _publishStatus(next.status);
-    _log('$event → ${describeStatus(next.status)}');
+    // Buffered positions arrive about every 500 ms while playing; logging
+    // them would push everything else out of the 50-entry log.
+    if (event is! BufferedPositionChanged) {
+      _log('$event → ${describeStatus(next.status)}');
+    }
+  }
+
+  /// Whether [status] keeps the Wi-Fi radio awake: only while audio is
+  /// live or being fetched (Connecting, Playing, Buffering, Reconnecting).
+  /// Interrupted, Paused, PlaybackError and Idle hold no lock (RESEARCH FGS
+  /// table, PLAT-06, T-13-01).
+  static bool wantsWifiLock(PlaybackStatus status) => switch (status) {
+    Connecting() || Playing() || Buffering() || Reconnecting() => true,
+    Idle() || Interrupted() || Paused() || PlaybackError() => false,
+  };
+
+  /// Brings the Wi-Fi lock in line with the state; the queue calls it after
+  /// a transition only when [wantsWifiLock] differs from what was last
+  /// asked, so it acquires once on entering the held set and releases once
+  /// on leaving it. A failing platform call is logged and never stops the
+  /// queue.
+  Future<void> _syncWifiLock() async {
+    final wanted = wantsWifiLock(_state.status);
+    _wifiLockHeld = wanted;
+    try {
+      if (wanted) {
+        await _wifiLock.acquire();
+      } else {
+        await _wifiLock.release();
+      }
+    } catch (error) {
+      _log('Wi-Fi lock ${wanted ? 'acquire' : 'release'} failed: $error');
+    }
   }
 
   Future<void> _execute(EngineCommand command) async {
@@ -355,6 +471,10 @@ class RadioAudioHandler extends BaseAudioHandler {
             duration,
             () => unawaited(_dispatch(TimerFired(kind, generation))),
           );
+          if (kind == TimerKind.backoff) {
+            _lastBackoff = duration;
+            _emitDiagnostics();
+          }
         case CancelTimer(:final kind):
           _timers.remove(kind)?.cancel();
         case CancelAllTimers():
@@ -363,6 +483,8 @@ class RadioAudioHandler extends BaseAudioHandler {
           _resolver.invalidate(stream);
         case ClearNowPlaying():
           _setNowPlaying(null);
+        case SetVolume(:final volume):
+          await _player.setVolume(volume);
         case RecordTimeToAudio(:final duration):
           _lastTimeToAudio = duration;
           _emitDiagnostics();
@@ -401,8 +523,35 @@ class RadioAudioHandler extends BaseAudioHandler {
   }
 
   // -------------------------------------------------------------------------
-  // Player inputs
+  // Player and network inputs
   // -------------------------------------------------------------------------
+
+  /// Seeds the network state from [ConnectivityPort.isOnline], then feeds
+  /// every change onto the queue. The state machine starts online, so only
+  /// an offline answer needs an event. A port that fails counts as online:
+  /// the stall watchdog and player failures still reconnect.
+  Future<void> _watchConnectivity() async {
+    var online = true;
+    try {
+      online = await _connectivity.isOnline();
+    } catch (error) {
+      _log('isOnline failed: $error');
+    }
+    if (_disposed) return;
+    if (!online) unawaited(_dispatch(const ConnectivityChanged(online: false)));
+    _subscriptions.add(
+      _connectivity.changes.listen(
+        (change) => unawaited(
+          _dispatch(
+            ConnectivityChanged(
+              online: change.online,
+              networkChanged: change.networkChanged,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
   void _onSnapshot(PlayerSnapshot snapshot) {
     if (snapshot.generation == _state.generation &&
@@ -419,6 +568,10 @@ class RadioAudioHandler extends BaseAudioHandler {
       ),
     );
   }
+
+  void _onBufferedPosition(BufferedPosition buffered) => unawaited(
+    _dispatch(BufferedPositionChanged(buffered.generation, buffered.position)),
+  );
 
   void _onFailure(PlayerFailure failure) =>
       unawaited(_dispatch(PlayerFailed(failure.generation, failure.code)));
@@ -512,6 +665,11 @@ class RadioAudioHandler extends BaseAudioHandler {
       url: candidate?.uri,
       kind: candidate?.kind,
       round: s.round,
+      reconnectAttempt: s.attempt,
+      nextRetryDelay: switch (s.status) {
+        Reconnecting(waitingForNetwork: false) => _lastBackoff,
+        _ => null,
+      },
       lastTimeToAudio: _lastTimeToAudio,
       recentEvents: List.unmodifiable(_recentEvents),
     );

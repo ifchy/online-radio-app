@@ -37,7 +37,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. A phone call with the screen off pauses the radio, and it resumes after hang-up. Navigation prompts duck the audio. Unplugging headphones or disconnecting Bluetooth pauses it. Resuming after a 5-minute user pause plays live audio, not stale buffer. Nothing restarts playback that the user paused or stopped.
   5. The app installs on Android 7.0 (minSdk 24) through current Android (target 36). Every PR runs `flutter analyze` and `flutter test` in CI, version tags produce a signed release AAB, and no key or secret exists in the public repo. The first-launch date is stored on the very first run, and no tracking SDK is present.
 
-**Plans**: 8/13 plans executed (8 waves)
+**Plans**: 13/13 plans executed (8 waves)
 
 Plans:
 **Wave 1**
@@ -46,7 +46,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 01-02-PLAN.md — CI on every PR (analyze, dart analyze, test, codegen staleness, release-manifest checks) + signed AAB/APK on tags + explicit SDK levels; owner keystore + secrets (blocking)
+- [x] 01-02-PLAN.md — CI on every PR (analyze, dart analyze, test, codegen staleness, release-manifest checks) + signed AAB/APK on tags + explicit SDK levels; owner keystore + secrets (blocking)
 - [x] 01-03-PLAN.md — BG/EN UI via gen-l10n and an accessible mini-player with state labels
 - [x] 01-04-PLAN.md — .pls/.m3u and extension-less HLS stations play (StreamResolver); app-owned traffic HTTPS-only
 - [x] 01-05-PLAN.md — Owner-verified six-station lineup with ordered fallback streams + debug-only test stations (D-02 blocking decision). 5 stations shipped: Витоша was excluded by the owner on 2026-09-25, and N-JOY uses its cdn.btv.bg stream.
@@ -66,16 +66,16 @@ Plans:
 
 **Wave 6** *(blocked on Wave 5 completion)*
 
-- [ ] 01-10-PLAN.md — Drop/stall reconnect at the live edge with backoff and the RetryBudget presets (online budget)
-- [ ] 01-11-PLAN.md — Debug/profile-only diagnostics panel with a per-stream switcher
+- [x] 01-10-PLAN.md — Drop/stall reconnect at the live edge with backoff and the RetryBudget presets (online budget)
+- [x] 01-11-PLAN.md — Debug/profile-only diagnostics panel with a per-stream switcher
 
 **Wave 7** *(blocked on Wave 6 completion)*
 
-- [ ] 01-12-PLAN.md — Wi-Fi↔4G and airplane-mode recovery, offline wait and offline budget (connectivity)
+- [x] 01-12-PLAN.md — Wi-Fi↔4G and airplane-mode recovery, offline wait and offline budget (connectivity)
 
 **Wave 8** *(blocked on Wave 7 completion)*
 
-- [ ] 01-13-PLAN.md — Calls, ducking, unplug and other media apps handled like a radio; Wi-Fi lock; Stop leaves nothing running
+- [x] 01-13-PLAN.md — Calls, ducking, unplug and other media apps handled like a radio; Wi-Fi lock; Stop leaves nothing running
 
 **UI hint**: yes
 **Notes**: This is the heaviest phase. It holds the explicit playback state machine (including `Interrupted(transient)`), the FGS policy, the stall watchdog, reconnect with backoff and jitter, fallback rotation, the `.pls`/`.m3u` resolver, cp1251 repair, the Wi-Fi lock check, the `PlayContext`/next-prev engine API and the media-ID scheme. `/gsd-plan-phase 1` should run with research (strong flag). Record the unlisted FGS demo video as soon as background playback works, because Play needs it for the declaration in Phase 4. If the phase proves too big for one verified increment, split it with `/gsd-phase --insert` into a skeleton part and a resilience part.
@@ -141,7 +141,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Playback Engine & Walking Skeleton | 8/13 | In Progress|  |
+| 1. Playback Engine & Walking Skeleton | 13/13 | In Progress|  |
 | 2. Station Catalogue, Search & Browse | 0/TBD | Not started | - |
 | 3. Listening Experience | 0/TBD | Not started | - |
 | 4. Hardening, Closed Testing & Store Release | 0/TBD | Not started | - |
